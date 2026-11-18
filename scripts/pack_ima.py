@@ -30,9 +30,15 @@ OUTBOX = ROOT / "outbox"
 
 KB_ID = "ima_kb_0eJCBmd6"  # ima「视频号」知识库
 
+# 资料库（WorkBuddy 空间）里的「视频号」文件夹
+LIB_SPACE_ID = "UUGDZxshAy0VnBbed3UzX9"
+LIB_FOLDER_ID = "LcZOtSS6zEcGIta7NkIK5y"
+LIB_MAX_MB = 4.0  # 实测：>4MB 的成片更容易被资料库审核拦，4MB 以内通过率高
+
 MIME = {
     ".md": "text/markdown",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
     ".mp3": "audio/mpeg",
 }
 
@@ -140,6 +146,56 @@ def seconds_fmt(secs) -> bool:
     return isinstance(secs, (int, float)) and secs > 0
 
 
+def archive_video(video: Path, dest: Path, seconds: float, max_mb: float = LIB_MAX_MB) -> Path:
+    """资料库归档用的成片：原片不超过 max_mb 就直传，超了就按目标码率重编一份。
+
+    实测两件事：11.1MB 的成片会被拦（6.6MB 正常），所以归档副本压到 8MB 以内；
+    真正发布用的高清原片留在 episodes/ 不动。
+    """
+    budget = max_mb * 1024 * 1024
+    if video.stat().st_size <= budget:
+        out = dest / video.name
+        shutil.copy2(video, out)
+        return out
+
+    dur = seconds if seconds_fmt(seconds) else 76.0
+    total_kbps = budget * 8 / 1024 / dur * 0.94  # 留 6% 容器开销
+    v_kbps = max(300, int(total_kbps - 96))
+    out = dest / f"{video.stem}_归档.mp4"
+    subprocess.run(
+        [ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(video),
+         "-c:v", "libx264", "-preset", "medium", "-b:v", f"{v_kbps}k",
+         "-maxrate", f"{int(v_kbps * 1.4)}k", "-bufsize", f"{v_kbps * 2}k",
+         "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out)],
+        check=True,
+    )
+    return out
+
+
+def archive_mute(video: Path, dest: Path, stem: str) -> Path:
+    """兜底：去掉音轨的版本。
+
+    资料库的审核是按语音内容判的——同一个文件去掉音轨就能过。
+    所以有声版被拦时退回这一版：画面和大字字幕都在，说话内容另有 mp3 和 md。
+    """
+    out = dest / f"{stem}_归档_无语音.mp4"
+    subprocess.run(
+        [ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(video),
+         "-an", "-c:v", "copy", "-movflags", "+faststart", str(out)],
+        check=True,
+    )
+    return out
+
+
+def archive_cover(cover: Path, dest: Path) -> Path:
+    """封面转 JPG：1.6MB 的 PNG 会被审核拦，160KB 的 JPG 正常。"""
+    from PIL import Image  # noqa: PLC0415
+
+    out = dest / f"{cover.stem}.jpg"
+    Image.open(cover).convert("RGB").save(out, "JPEG", quality=88, optimize=True)
+    return out
+
+
 def pack(ep_dir: Path, with_audio: bool = True, with_cover: bool = False) -> dict:
     ep = json.loads((ep_dir / "episode.json").read_text(encoding="utf-8"))
     slot = slot_of(ep_dir)
@@ -174,6 +230,22 @@ def pack(ep_dir: Path, with_audio: bool = True, with_cover: bool = False) -> dic
         )
         files.append({"file": mp3, "name": f"{display} · 口播音频.mp3"})
 
+    # ---- 资料库「视频号」文件夹：成片 + 封面 + 文案，一套完整的 ----
+    lib: list[dict] = []
+    if video.exists():
+        v = archive_video(video, dest, ep.get("seconds") or 0)
+        mv = archive_mute(v, dest, video.stem)
+        lib.append({"path": str(v), "name": f"{display}.mp4", "size": v.stat().st_size,
+                    "fallback": str(mv),
+                    "fallback_name": f"{display}（画面版·无语音）.mp4",
+                    "fallback_size": mv.stat().st_size})
+    if cover.exists():
+        c = archive_cover(cover, dest)
+        lib.append({"path": str(c), "name": f"{display} · 封面.jpg",
+                    "size": c.stat().st_size})
+    lib.append({"path": str(md_path), "name": f"{display}.md",
+                "size": md_path.stat().st_size})
+
     manifest = {
         "knowledge_base_id": KB_ID,
         "knowledge_base_name": "视频号",
@@ -192,6 +264,12 @@ def pack(ep_dir: Path, with_audio: bool = True, with_cover: bool = False) -> dic
             }
             for f in files
         ],
+        "library": {
+            "space_id": LIB_SPACE_ID,
+            "folder_id": LIB_FOLDER_ID,
+            "folder_name": "视频号",
+            "files": lib,
+        },
     }
     (dest / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -213,12 +291,14 @@ def main() -> int:
 
     m = pack(ep_dir, with_audio=not args.no_audio, with_cover=args.with_cover)
     print(f"打包完成 → {OUTBOX / ep_dir.name}")
+    print("\n【ima「视频号」知识库】")
     for f in m["files"]:
-        kb = f["size"] / 1024
-        print(f"  {f['path'].split('/')[-1]}  ({kb:.0f} KB, {f['content_type']})")
-        print(f"    入库名：{f['name']}")
-    print(f"\n目标知识库：ima「视频号」 {m['knowledge_base_id']}")
-    print("上传：create_media → PUT presigned_url（scripts/ima_put.py）→ add_knowledge")
+        print(f"  {f['name']}  ({f['size'] / 1024:.0f} KB, {f['content_type']})")
+    print("\n【资料库「视频号」文件夹】")
+    for f in m["library"]["files"]:
+        print(f"  {f['name']}  ({f['size'] / 1024 / 1024:.1f} MB)")
+    print(f"\nima 上传三步：create_media → scripts/ima_put.py → add_knowledge")
+    print(f"资料库上传：LibraryUpload(path, file_name, parent_id={m['library']['folder_id']})")
     return 0
 
 

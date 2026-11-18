@@ -305,10 +305,14 @@ def cmd_sync(args) -> int:
         return 1
     m = pack_ima.pack(ep_dir, with_audio=not args.no_audio, with_cover=args.with_cover)
     print(f"打包完成 → outbox/{ep_dir.name}")
+    print("\n【ima「视频号」知识库】")
     for f in m["files"]:
-        print(f"  {f['name']}  ({f['size'] / 1024:.0f} KB, {f['content_type']})")
-    print(f"目标知识库：ima「视频号」 {m['knowledge_base_id']}")
-    print("上传三步：create_media → scripts/ima_put.py → add_knowledge")
+        print(f"  {f['name']}  ({f['size'] / 1024:.0f} KB)")
+    print("\n【资料库「视频号」文件夹】")
+    for f in m["library"]["files"]:
+        print(f"  {f['name']}  ({f['size'] / 1024 / 1024:.2f} MB)")
+    print("\nima：create_media → scripts/ima_put.py → add_knowledge")
+    print(f"资料库：LibraryUpload(path, file_name, parent_id={m['library']['folder_id']})")
     return 0
 
 

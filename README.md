@@ -25,6 +25,7 @@ x2ding（GitHub Actions 每 10 分钟抓 X）
 
 ```
 config.json              抓取窗口、评分词表、画面尺寸、频道名、免责声明
+scripts/run.py           编排入口：new / build / status / all
 scripts/fetch.py         读 x2ding 的 watchlist，从 ntfy 拉推文，落 data/
 scripts/curate.py        打分排序，输出候选
 scripts/build_episode.py episode.json → video.mp4 + cover.png（本地 TTS，无网络）
@@ -44,17 +45,47 @@ episodes/<date>-<slug>/  一期一个目录
 | `video.mp4` | 1080×1920，H.264 + AAC |
 | `cover.png` | 1080×1440（3:4） |
 
-## 用法
+## 用法（下次只跑这两条）
+
+```bash
+cd x-finance-daily
+
+python3 scripts/run.py                      # ① 抓取 + 打分 + 建今天这一期的草稿
+# ② 补 episodes/<date>-<slug>/episode.json 里的 title / scenes[]（这步是唯一要动脑的）
+python3 scripts/run.py build --crf 16       # ③ 出片 + 出文案，产物路径直接打印出来
+```
+
+`run.py` 只做编排，日志、检查、产物清单都在里面：
+
+| 命令 | 作用 |
+| --- | --- |
+| `run.py` / `run.py new` | 抓 48h 推文 → 打分 → 打印前 8 名候选 → 建草稿（`episode.json` + `sources.md` 骨架） |
+| `run.py new --pick 3 --slug gold` | 选第 3 名候选，目录名后缀改成 `gold` |
+| `run.py new --offline` | 不联网，直接用 `data/raw` 里最新的缓存 |
+| `run.py build` | 最新一期 → `video.mp4` / `cover.png` / `script.md` / `caption.md`（默认 `--crf 16`） |
+| `run.py build <slug>` | 指定一期 |
+| `run.py status` | 每期进度：草稿 / 待出片 / 已出片，附时长体积 |
+| `run.py all` | new + build，草稿没补齐会自动停下 |
+
+草稿不完整时 `build` 会拒绝出片并告诉你缺什么（`scenes` 为空、还有 `TODO`、某句缺 `caption`），
+不会产出半成品视频。
+
+### 也可以直接在对话里说
+
+项目里带了一个技能 `x-finance-daily`（`.workbuddy/skills/x-finance-daily/SKILL.md`），
+下次在 WorkBuddy 里说 **「生成今天这期」** 就会自动走完：选题 → 写文案 → 出片 → 给发布清单。
+文案规范和红线（只讲机制、不给点位、数字必须有出处）都写在那份技能里，不用每次重复交代。
+
+### 分步跑（调试用）
 
 ```bash
 pip install pillow imageio-ffmpeg edge-tts
 
 python3 scripts/fetch.py                          # 拉 48 小时推文
 python3 scripts/curate.py --top 20                # 看候选
-# 手动新建 episodes/<date>-<slug>/episode.json
-python3 scripts/build_episode.py 2026-11-18-gold-vs-rates --crf 16
-python3 scripts/render_docs.py 2026-11-18-gold-vs-rates
-# 发布：见 episodes/<slug>/publish.md，手动发
+python3 scripts/build_episode.py <slug> --crf 16  # 只出片
+python3 scripts/render_docs.py <slug>             # 只出文档
+# 发布：见 episodes/<slug>/publish.md
 ```
 
 `--crf 16` 是给上传用的画质档。默认 20 只够本地看——视频号会对上传文件再压一次，

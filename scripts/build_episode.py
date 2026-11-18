@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """把一个 episode.json 渲染成竖屏口播视频。
 
-流程：逐句 TTS → 逐帧出图 → 每句生成一段带音轨的视频 → concat 成片。
-不依赖网络，不依赖任何在线配音服务。
+流程：逐句 TTS（带逐字时间戳）→ 逐帧出图 → 每句一段视频 → concat → 烧字幕。
+字幕时间轴来自 edge-tts 的 WordBoundary 事件，不是按字数估算。
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import wave
 from pathlib import Path
 
 import imageio_ffmpeg
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
@@ -23,10 +23,31 @@ FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 FONT_HEAVY = "/System/Library/Fonts/STHeiti Medium.ttc"
 FONT_LIGHT = "/System/Library/Fonts/Hiragino Sans GB.ttc"
 
-WHITE = (255, 255, 255)
-INK = (17, 17, 17)
-MUTED = (150, 150, 150)
-ACCENT = (192, 57, 43)  # 红：中文财经语境里的"强调色"
+# 三套主题：背景渐变、文字、次要文字、强调色
+THEMES = {
+    "ink": {
+        "bg_top": (15, 17, 23),
+        "bg_bottom": (28, 32, 42),
+        "ink": (243, 243, 241),
+        "muted": (124, 131, 145),
+        "accent": (176, 141, 87),
+        "rule": (48, 53, 64),
+        "sub_color": "&H00F1F3F3",  # ASS 是 &HAABBGGRR
+        "sub_outline": 2,
+        "grain": 6,
+    },
+    "paper": {
+        "bg_top": (247, 245, 241),
+        "bg_bottom": (235, 231, 224),
+        "ink": (26, 26, 26),
+        "muted": (139, 137, 131),
+        "accent": (176, 60, 45),
+        "rule": (222, 218, 210),
+        "sub_color": "&H00262626",
+        "sub_outline": 0,
+        "grain": 2,
+    },
+}
 
 
 def ensure_dir(path: Path) -> Path:
@@ -38,21 +59,20 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
-def run(cmd: list[str]) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+def run(cmd: list[str], cwd: Path | None = None) -> None:
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if proc.returncode != 0:
-        raise RuntimeError(f"命令失败: {' '.join(cmd[:4])}...\n{proc.stderr[-800:]}")
+        raise RuntimeError(f"命令失败: {' '.join(cmd[:4])}...\n{proc.stderr[-1200:]}")
 
 
 def load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
     try:
         return ImageFont.truetype(path, size)
     except OSError:
-        return ImageFont.truetype("/System/Library/Fonts/Hiragino Sans GB.ttc", size)
+        return ImageFont.truetype(FONT_LIGHT, size)
 
 
 def wrap(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
-    """按字符宽度折行，保留原文里的显式换行。"""
     lines: list[str] = []
     for para in text.split("\n"):
         if not para:
@@ -70,6 +90,25 @@ def wrap(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
     return lines
 
 
+def gradient_bg(w: int, h: int, top: tuple, bottom: tuple, grain: int = 6) -> Image.Image:
+    """竖向线性渐变，并叠一层细颗粒。
+
+    纯渐变在 8-bit H.264 下会出明显色带（每 100px 跳一档），
+    加 ±6 的高斯噪声可以把它抖散，肉眼看是质感，不是噪点。
+    """
+    strip = Image.new("RGB", (1, h))
+    px = strip.load()
+    for y in range(h):
+        t = y / max(1, h - 1)
+        px[0, y] = tuple(int(a + (b - a) * t) for a, b in zip(top, bottom))
+    img = strip.resize((w, h), Image.BILINEAR)
+
+    noise = Image.effect_noise((w, h), grain).convert("L")
+    noise_rgb = Image.merge("RGB", (noise, noise, noise))
+    # (img + noise) - 128：噪声以 128 为中心，等于零均值抖动
+    return ImageChops.add(img, noise_rgb, scale=1.0, offset=-128)
+
+
 def _fit_headline(caption: str, box_w: int, start_fs: int, min_fs: int, max_block_h: int):
     """从大往小试字号，优先找到「每个显式换行都不再被折断」的尺寸。"""
     paras = [p for p in caption.split("\n") if p]
@@ -81,7 +120,6 @@ def _fit_headline(caption: str, box_w: int, start_fs: int, min_fs: int, max_bloc
         if no_break and line_h * len(paras) <= max_block_h:
             return f, paras, line_h
         fs -= 3
-    # 实在放不下，退回折行
     f = load_font(FONT_HEAVY, min_fs)
     return f, wrap(caption, f, box_w), int(min_fs * 1.40)
 
@@ -95,6 +133,7 @@ def _draw_headline(
     max_block_h: int,
     center_y: int,
     left_pad: int,
+    theme: dict,
 ) -> dict:
     f, lines, line_h = _fit_headline(caption, box_w, start_fs, min_fs, max_block_h)
     block_h = line_h * len(lines)
@@ -103,10 +142,10 @@ def _draw_headline(
     bar_left = left_pad
     d.rectangle(
         [bar_left, top + int(line_h * 0.16), bar_left + max(6, int(f.size * 0.10)), top + block_h - int(line_h * 0.16)],
-        fill=ACCENT,
+        fill=theme["accent"],
     )
     for i, line in enumerate(lines):
-        d.text((bar_left + int(f.size * 0.52), top + i * line_h), line, font=f, fill=INK)
+        d.text((bar_left + int(f.size * 0.52), top + i * line_h), line, font=f, fill=theme["ink"])
     return {"top": top, "bottom": top + block_h, "line_h": line_h, "font": f}
 
 
@@ -117,26 +156,27 @@ def render_frame(
     size: tuple[int, int],
     is_last: bool,
     disclaimer: str,
+    theme: dict,
 ) -> None:
     w, h = size
-    img = Image.new("RGB", (w, h), WHITE)
+    img = gradient_bg(w, h, theme["bg_top"], theme["bg_bottom"], theme.get("grain", 6))
     d = ImageDraw.Draw(img)
 
     margin = int(w * 0.085)
-    f_brand = load_font(FONT_LIGHT, int(w * 0.030))
-    d.text((margin, int(h * 0.062)), brand, font=f_brand, fill=MUTED)
+    f_brand = load_font(FONT_LIGHT, int(w * 0.028))
+    d.text((margin, int(h * 0.062)), brand, font=f_brand, fill=theme["muted"])
 
-    # 竖屏中文字块略高于几何中心：底部要给视频号的标题/按钮留位置
+    # 中文字块略高于几何中心：底部要留给字幕和视频号自身 UI
     _draw_headline(
         d, caption, w - margin * 2 - int(w * 0.055),
         start_fs=int(w * 0.098), min_fs=int(w * 0.050),
-        max_block_h=int(h * 0.38), center_y=int(h * 0.452),
-        left_pad=margin,
+        max_block_h=int(h * 0.36), center_y=int(h * 0.420),
+        left_pad=margin, theme=theme,
     )
 
     if is_last:
-        f_small = load_font(FONT_LIGHT, int(w * 0.023))
-        d.text((margin, h - int(h * 0.115)), disclaimer, font=f_small, fill=MUTED)
+        f_small = load_font(FONT_LIGHT, int(w * 0.022))
+        d.text((margin, h - int(h * 0.130)), disclaimer, font=f_small, fill=theme["muted"])
 
     img.save(path, "PNG")
 
@@ -146,22 +186,23 @@ def render_cover(
     caption: str,
     subtitle: str,
     brand: str,
+    theme: dict,
     size: tuple[int, int] = (1080, 1440),
 ) -> None:
     """视频号封面单独排版，不走 9:16 帧缩放，避免字被压扁。"""
     w, h = size
-    img = Image.new("RGB", (w, h), WHITE)
+    img = gradient_bg(w, h, theme["bg_top"], theme["bg_bottom"], theme.get("grain", 6))
     d = ImageDraw.Draw(img)
     margin = int(w * 0.085)
 
     f_brand = load_font(FONT_LIGHT, int(w * 0.028))
-    d.text((margin, int(h * 0.072)), brand, font=f_brand, fill=MUTED)
+    d.text((margin, int(h * 0.072)), brand, font=f_brand, fill=theme["muted"])
 
     box = _draw_headline(
         d, caption, w - margin * 2 - int(w * 0.070),
         start_fs=int(w * 0.120), min_fs=int(w * 0.058),
         max_block_h=int(h * 0.46), center_y=int(h * 0.415),
-        left_pad=margin,
+        left_pad=margin, theme=theme,
     )
 
     if subtitle:
@@ -169,87 +210,198 @@ def render_cover(
         sub_lines = wrap(subtitle, f_sub, w - margin * 2 - int(w * 0.06))
         y = box["bottom"] + int(h * 0.038)
         for i, line in enumerate(sub_lines):
-            d.text((margin + int(w * 0.016), y + i * int(w * 0.058)), line, font=f_sub, fill=(96, 96, 96))
+            d.text((margin + int(w * 0.016), y + i * int(w * 0.058)), line, font=f_sub, fill=theme["muted"])
 
-    d.rectangle([margin, h - int(h * 0.080), w - margin, h - int(h * 0.080) + 2], fill=(232, 232, 232))
+    d.rectangle([margin, h - int(h * 0.080), w - margin, h - int(h * 0.080) + 2], fill=theme["rule"])
     img.save(path, "PNG")
 
 
-def tts(text: str, ep: dict, aiff: Path, wav: Path, cache_dir: Path | None = None) -> float:
-    """合成一句语音并转成 44.1k 单声道 wav，返回时长。
+def synth_edge(text: str, voice: str, rate: str, mp3: Path) -> list[tuple[str, float, float]]:
+    """合成语音，返回时间轴片段 [(text, start, end)]，单位秒。
 
-    engine = "edge" 走 edge-tts（自然，需联网）；否则走 macOS say（离线兜底）。
-    结果按 (文本, 音色, 语速) 缓存，重跑不再联网。
+    注意：中文音色返回的是 SentenceBoundary（整句），英文才返回 WordBoundary（逐词）。
+    两种都收，后面统一在字符级重排。
     """
-    import hashlib
+    import asyncio
     import time as _time
 
-    engine = (ep.get("tts") or {}).get("engine", "say")
+    import edge_tts
+
+    events: list[tuple[str, float, float]] = []
+
+    async def _go() -> None:
+        comm = edge_tts.Communicate(text, voice, rate=rate)
+        with open(mp3, "wb") as f:
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+                elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
+                    start = chunk["offset"] / 1e7
+                    dur = chunk["duration"] / 1e7
+                    events.append((chunk["text"], start, start + dur))
+
+    last: Exception | None = None
+    for attempt in range(4):
+        events.clear()
+        try:
+            asyncio.run(_go())
+            return events
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            _time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"edge-tts 连续失败: {last}")
+
+
+def tts(
+    text: str, ep: dict, aiff: Path, wav: Path, cache_dir: Path | None = None
+) -> tuple[float, list[tuple[str, float, float]] | None]:
+    """合成一句并转成 44.1k 单声道 wav。返回 (时长, 逐词时间轴或 None)。"""
+    import hashlib
+
     conf = ep.get("tts") or {}
-    voice = conf.get("voice", "zh-CN-YunjianNeural")
+    engine = conf.get("engine", "say")
+    voice = conf.get("voice", "zh-CN-XiaoxiaoNeural")
     rate = conf.get("rate", "+0%")
 
     key = hashlib.sha1(f"{engine}|{voice}|{rate}|{text}".encode()).hexdigest()[:16]
-    if cache_dir is not None:
-        cached = cache_dir / f"{key}.wav"
-        if cached.exists():
-            wav.write_bytes(cached.read_bytes())
-            with wave.open(str(cached), "rb") as wf:
-                return wf.getnframes() / wf.getframerate()
+    cached_wav = cache_dir / f"{key}.wav" if cache_dir else None
+    cached_words = cache_dir / f"{key}.words.json" if cache_dir else None
 
+    has_words = bool(cached_words and cached_words.exists())
+    if cached_wav and cached_wav.exists() and (engine != "edge" or has_words):
+        wav.write_bytes(cached_wav.read_bytes())
+        words = [tuple(w) for w in json.loads(cached_words.read_text())] if has_words else None
+        with wave.open(str(wav), "rb") as wf:
+            return wf.getnframes() / wf.getframerate(), words
+
+    words = None
     if engine == "edge":
-        import asyncio
-
-        import edge_tts
-
         mp3 = aiff.with_suffix(".mp3")
-        last: Exception | None = None
-        for attempt in range(4):
-            try:
-                asyncio.run(edge_tts.Communicate(text, voice, rate=rate).save(str(mp3)))
-                last = None
-                break
-            except Exception as exc:  # noqa: BLE001
-                last = exc
-                _time.sleep(2 * (attempt + 1))
-        if last is not None:
-            raise RuntimeError(f"edge-tts 连续失败: {last}")
+        words = synth_edge(text, voice, rate, mp3)
         run([FFMPEG, "-y", "-loglevel", "error", "-i", str(mp3), "-ar", "44100", "-ac", "1", str(wav)])
     else:
         run(["say", "-v", ep.get("voice", "Tingting"), "-r", str(ep.get("rate", 178)), "-o", str(aiff), text])
         run([FFMPEG, "-y", "-loglevel", "error", "-i", str(aiff), "-ar", "44100", "-ac", "1", str(wav)])
 
-    if cache_dir is not None:
+    if cache_dir:
         ensure_dir(cache_dir)
-        (cache_dir / f"{key}.wav").write_bytes(wav.read_bytes())
+        cached_wav.write_bytes(wav.read_bytes())
+        if words:
+            cached_words.write_text(json.dumps(words, ensure_ascii=False))
 
     with wave.open(str(wav), "rb") as wf:
-        return wf.getnframes() / wf.getframerate()
+        return wf.getnframes() / wf.getframerate(), words
 
 
-def build(ep_dir: Path, skip_tts: bool = False) -> dict:
+BREAK_CHARS = "，。！？；：、,"
+STRIP_END = "，。、；：,.;: "
+
+
+def chunk_words(
+    events: list[tuple[str, float, float]] | None, text: str, duration: float, max_chars: int = 12
+) -> list[tuple[float, float, str]]:
+    """把 TTS 时间轴切成字幕行。
+
+    先把每个片段的时长均摊到它的每个字，得到字符级时间轴；
+    再按标点和最大字数合并成行。这样 SentenceBoundary / WordBoundary 都能处理。
+    """
+    if not events:
+        # 完全没时间轴：按标点切句，按字数均分时长
+        parts, cur = [], ""
+        for ch in text:
+            cur += ch
+            if ch in "。！？，；":
+                parts.append(cur)
+                cur = ""
+        if cur:
+            parts.append(cur)
+        total_chars = sum(len(p) for p in parts) or 1
+        out, t = [], 0.0
+        for p in parts:
+            d = duration * len(p) / total_chars
+            label = p.strip(STRIP_END)
+            if label:
+                out.append((t, t + d, label))
+            t += d
+        return out
+
+    chars: list[tuple[str, float, float]] = []
+    for seg_text, seg_start, seg_end in events:
+        if not seg_text:
+            continue
+        step = (seg_end - seg_start) / len(seg_text)
+        for i, ch in enumerate(seg_text):
+            chars.append((ch, seg_start + i * step, seg_start + (i + 1) * step))
+
+    cues: list[tuple[float, float, str]] = []
+    buf: list[tuple[str, float, float]] = []
+    for ch, s, e in chars:
+        buf.append((ch, s, e))
+        label = "".join(c[0] for c in buf).strip()
+        if (ch in BREAK_CHARS and len(label) >= 6) or len(label) >= max_chars:
+            text_out = "".join(c[0] for c in buf).strip(STRIP_END)
+            if text_out:
+                cues.append((buf[0][1], buf[-1][2], text_out))
+            buf = []
+    if buf:
+        text_out = "".join(c[0] for c in buf).strip(STRIP_END)
+        if text_out:
+            cues.append((buf[0][1], buf[-1][2], text_out))
+    return cues
+
+
+def ass_time(sec: float) -> str:
+    h = int(sec // 3600)
+    m = int(sec % 3600 // 60)
+    s = sec % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def build_ass(cues: list[tuple[float, float, str]], theme: dict, path: Path) -> None:
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Sub,PingFang SC,58,{theme['sub_color']},{theme['sub_color']},&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,{theme['sub_outline']},0,2,100,100,400,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    lines = [header]
+    for start, end, text in cues:
+        lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Sub,,0,0,0,,{text}\n")
+    path.write_text("".join(lines), encoding="utf-8")
+
+
+def build(ep_dir: Path, skip_tts: bool = False, theme_name: str = "ink", subtitles: bool = True) -> dict:
     cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     ep = json.loads((ep_dir / "episode.json").read_text(encoding="utf-8"))
     out = cfg["output"]
     size = (out["width"], out["height"])
     fps = out["fps"]
+    theme = THEMES[theme_name]
     brand = f"{cfg['channel']['name']} · {ep.get('topic', '金融科普')}"
 
     tmp = ensure_dir(ep_dir / "build")
     cache_dir = ep_dir / ".cache"
-    voice = ep.get("voice", "Tingting")
-    rate = ep.get("rate", 178)
     segments, total = [], 0.0
     timings: list[float] = []
+    cues: list[tuple[float, float, str]] = []
+
     for i, scene in enumerate(ep["scenes"]):
         aiff, wav, png = tmp / f"s{i}.aiff", tmp / f"s{i}.wav", tmp / f"s{i}.png"
         seg = tmp / f"seg{i}.mp4"
 
-        if skip_tts and wav.exists():
-            with wave.open(str(wav), "rb") as wf:
-                dur = wf.getnframes() / wf.getframerate()
-        else:
-            dur = tts(scene["text"], ep, aiff, wav, cache_dir=cache_dir)
+        # tts() 自带按 (文本,音色,语速) 的缓存，重跑不会重复联网
+        dur, words = tts(scene["text"], ep, aiff, wav, cache_dir=cache_dir)
+
+        for start, end, text in chunk_words(words, scene["text"], dur):
+            cues.append((total + start, total + end, text))
 
         render_frame(
             png,
@@ -258,6 +410,7 @@ def build(ep_dir: Path, skip_tts: bool = False) -> dict:
             size,
             is_last=(i == len(ep["scenes"]) - 1),
             disclaimer=cfg["channel"]["disclaimer"],
+            theme=theme,
         )
 
         run([
@@ -276,38 +429,65 @@ def build(ep_dir: Path, skip_tts: bool = False) -> dict:
 
     lst = tmp / "concat.txt"
     lst.write_text("".join(f"file '{s.name}'\n" for s in segments), encoding="utf-8")
-    video = ep_dir / "video.mp4"
+    raw = tmp / "raw.mp4"
     run([
         FFMPEG, "-y", "-loglevel", "error",
         "-f", "concat", "-safe", "0", "-i", str(lst),
-        "-c", "copy", "-movflags", "+faststart", str(video),
+        "-c", "copy", str(raw),
     ])
 
-    # 封面 3:4，单独排版
-    cover = ep_dir / "cover.png"
+    suffix = "" if theme_name == "ink" else f"-{theme_name}"
+    video = ep_dir / f"video{suffix}.mp4"
+    if subtitles:
+        build_ass(cues, theme, tmp / "subs.ass")
+        run([
+            FFMPEG, "-y", "-loglevel", "error", "-i", str(raw),
+            "-vf", "ass=subs.ass",
+            "-c:v", "libx264", "-crf", "20", "-preset", "medium",
+            "-pix_fmt", "yuv420p", "-c:a", "copy",
+            "-movflags", "+faststart", str(video),
+        ], cwd=tmp)
+    else:
+        run([
+            FFMPEG, "-y", "-loglevel", "error", "-i", str(raw),
+            "-c", "copy", "-movflags", "+faststart", str(video),
+        ])
+
+    cover = ep_dir / f"cover{suffix}.png"
     render_cover(
         cover,
         caption=ep.get("cover_caption") or ep["scenes"][0]["caption"],
         subtitle=ep.get("subtitle", ""),
         brand=brand,
+        theme=theme,
     )
 
     if total > out["max_seconds"]:
         print(f"! 时长 {total:.0f}s 超过上限 {out['max_seconds']}s，建议精简文案", file=sys.stderr)
 
-    ep["timings"] = timings
-    ep["seconds"] = round(total, 1)
-    (ep_dir / "episode.json").write_text(
-        json.dumps(ep, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    if theme_name == "ink":
+        ep["timings"] = timings
+        ep["seconds"] = round(total, 1)
+        (ep_dir / "episode.json").write_text(
+            json.dumps(ep, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
-    return {"video": str(video), "cover": str(cover), "seconds": round(total, 1), "scenes": len(segments)}
+    return {
+        "video": str(video),
+        "cover": str(cover),
+        "seconds": round(total, 1),
+        "scenes": len(segments),
+        "cues": len(cues),
+        "theme": theme_name,
+    }
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("episode", help="episode 目录名或路径")
-    ap.add_argument("--skip-tts", action="store_true", help="复用已有音频，只重渲染画面")
+    ap.add_argument("--theme", default="ink", choices=sorted(THEMES), help="主题配色")
+    ap.add_argument("--no-subs", action="store_true", help="不烧字幕")
+    ap.add_argument("--keep", action="store_true", help="保留 build 中间件")
     args = ap.parse_args()
 
     ep_dir = Path(args.episode)
@@ -317,9 +497,10 @@ def main() -> int:
         print(f"找不到 {ep_dir}/episode.json", file=sys.stderr)
         return 2
 
-    info = build(ep_dir, skip_tts=args.skip_tts)
+    info = build(ep_dir, theme_name=args.theme, subtitles=not args.no_subs)
     print(json.dumps(info, ensure_ascii=False, indent=2))
-    shutil.rmtree(ep_dir / "build", ignore_errors=True)
+    if not args.keep:
+        shutil.rmtree(ep_dir / "build", ignore_errors=True)
     return 0
 
 

@@ -47,15 +47,33 @@ episodes/<date>-<slug>/  一期一个目录
 ## 用法
 
 ```bash
-pip install pillow imageio-ffmpeg
+pip install pillow imageio-ffmpeg edge-tts
 
 python3 scripts/fetch.py                          # 拉 48 小时推文
 python3 scripts/curate.py --top 20                # 看候选
 # 手动新建 episodes/<date>-<slug>/episode.json
-python3 scripts/build_episode.py 2026-11-18-gold-vs-rates
+python3 scripts/build_episode.py 2026-11-18-gold-vs-rates --theme ink
 python3 scripts/render_docs.py 2026-11-18-gold-vs-rates
 python3 scripts/publish.py 2026-11-18-gold-vs-rates --fill
 ```
+
+### 主题与字幕
+
+`--theme ink`（深墨，默认）或 `--theme paper`（米白）。两版会输出成
+`video.mp4` / `video-paper.mp4`，封面同理，方便直接对比。
+
+字幕默认烧进画面，时间轴来自 edge-tts 的 boundary 事件：
+
+- 中文音色返回的是 `SentenceBoundary`（整句），英文才是 `WordBoundary`（逐词）
+- 两种都收，然后均摊到字符级时间轴，再按标点和 12 字上限切成字幕行
+- 字幕位置固定 `MarginV=400`，避开视频号底部的标题和按钮
+
+`--no-subs` 可以关掉字幕。字体走 `PingFang SC`，由 libass 解析，不需要额外装字体。
+
+### 背景为什么带颗粒
+
+纯渐变在 8-bit H.264 下会出横向色带（每 100px 跳一档）。渲染时叠一层零均值高斯噪声抖动，
+`ink` 用 σ=6，`paper` 用 σ=2 —— 浅色底噪点太强会显脏。
 
 ### 换成自己的声音
 

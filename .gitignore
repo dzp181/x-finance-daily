@@ -14,3 +14,12 @@ data/watchlist.json
 # 渲染中间件
 episodes/*/build/
 episodes/*/.cache/
+
+# 数字人依赖：体积大且有独立许可，不进仓库
+.venv-lipsync/
+assets/models/
+scripts/lipsync/third_party/
+
+# 成片体积大
+episodes/*/avatar/*.mp4
+episodes/*/avatar/*.wav

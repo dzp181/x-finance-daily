@@ -105,3 +105,47 @@ python3 scripts/publish.py 2026-11-18-gold-vs-rates --fill
 ```
 
 `caption` 里用 `\n` 显式换行。排版会优先保住每一行不折断，宁可缩字号也不硬拆。
+
+---
+
+## 数字人主播（实验）
+
+让一张静态人像按口播音频说话，用于替代纯文字卡片。
+
+```bash
+bash scripts/lipsync/setup.sh                 # 建 .venv-lipsync + 拉模型，约 700MB
+.venv-lipsync/bin/python scripts/lipsync/render.py \
+  --image assets/avatar/host.png \
+  --audio vo16k.wav \
+  --out episodes/<slug>/avatar/talk.mp4 \
+  --fps 25
+```
+
+M1 上约 30fps 渲染（1080×1920），80 秒成片约 1 分钟。
+
+### ⚠️ 许可限制，务必先读
+
+Wav2Lip 开源版**明确禁止商用**，原文：
+
+> All results from this open-source code ... should only be used for research/academic/personal
+> purposes only ... **any form of commercial use is strictly prohibited**.
+
+带导流、带货、接广的视频号内容属于商用。所以这套脚本**只用于效果验证**，
+不要直接拿来跑要发布的成片。可商用的替代：
+
+| 方案 | 许可 | 质量 | 成本 |
+| --- | --- | --- | --- |
+| 可灵 Omni-Ref 音频驱动 | 商业授权 | 最好，口型与表情自然 | 按秒计费 |
+| MuseTalk（腾讯） | MIT | 好于 Wav2Lip，需 GPU | 免费 |
+| LivePortrait | MIT | 表情好，口型一般 | 免费 |
+
+### 实现要点
+
+- 人脸检测换成 OpenCV YuNet，用 5 点关键点重新算人脸框。直接用检测框会把
+  头发、额头、脖子一起卷进 96×96，全部重建成糊的一团。
+- 只替换嘴部椭圆区域，上半脸（眼睛、额头、皮肤纹理）保留原图。整块替换会
+  出现「半张脸清晰、半张脸糊」的接缝。
+- LAB 空间做颜色匹配，且只用被替换区域内的像素统计——用整张脸的均值去校准
+  嘴周一小块，会把它拉向全脸平均色，反而出现色差。
+- mel 特征自己实现（`mel.py`），不走 librosa，规避 numba 在 Python 3.10 上的
+  安装问题。参数必须与训练一致：16k / n_fft 800 / hop 200 / 80 mel / Slaney 归一化。

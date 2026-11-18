@@ -23,9 +23,10 @@ FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 FONT_HEAVY = "/System/Library/Fonts/STHeiti Medium.ttc"
 FONT_LIGHT = "/System/Library/Fonts/Hiragino Sans GB.ttc"
 
-# 三套主题：背景渐变、文字、次要文字、强调色
+# 主题：文字色、强调色；背景优先用 bg_image（相对项目根），缺失时退回渐变
 THEMES = {
     "ink": {
+        "bg_image": "assets/bg/ink-frost.png",
         "bg_top": (15, 17, 23),
         "bg_bottom": (28, 32, 42),
         "ink": (243, 243, 241),
@@ -37,6 +38,7 @@ THEMES = {
         "grain": 6,
     },
     "paper": {
+        "bg_image": "",
         "bg_top": (247, 245, 241),
         "bg_bottom": (235, 231, 224),
         "ink": (26, 26, 26),
@@ -109,6 +111,28 @@ def gradient_bg(w: int, h: int, top: tuple, bottom: tuple, grain: int = 6) -> Im
     return ImageChops.add(img, noise_rgb, scale=1.0, offset=-128)
 
 
+def make_bg(w: int, h: int, theme: dict) -> Image.Image:
+    """取背景：优先用主题指定的图片，缺失则退回渐变。
+
+    背景图按「覆盖裁切、顶部对齐」缩放到目标尺寸——光源在右上，裁掉底部
+    比裁掉顶部安全（封面 1080x1440 会切掉下方 480px，光源仍完整）。
+    """
+    rel = theme.get("bg_image") or ""
+    if rel:
+        fp = Path(rel) if Path(rel).is_absolute() else ROOT / rel
+        if fp.exists():
+            im = Image.open(fp).convert("RGB")
+            if im.size != (w, h):
+                scale = max(w / im.width, h / im.height)
+                nw, nh = round(im.width * scale), round(im.height * scale)
+                im = im.resize((nw, nh), Image.LANCZOS)
+                left = (nw - w) // 2
+                im = im.crop((left, 0, left + w, h))
+            return im
+        print(f"! 背景图不存在，退回渐变：{fp}", file=sys.stderr)
+    return gradient_bg(w, h, theme["bg_top"], theme["bg_bottom"], theme.get("grain", 6))
+
+
 def _fit_headline(caption: str, box_w: int, start_fs: int, min_fs: int, max_block_h: int):
     """从大往小试字号，优先找到「每个显式换行都不再被折断」的尺寸。"""
     paras = [p for p in caption.split("\n") if p]
@@ -159,7 +183,7 @@ def render_frame(
     theme: dict,
 ) -> None:
     w, h = size
-    img = gradient_bg(w, h, theme["bg_top"], theme["bg_bottom"], theme.get("grain", 6))
+    img = make_bg(w, h, theme)
     d = ImageDraw.Draw(img)
 
     margin = int(w * 0.085)
@@ -191,7 +215,7 @@ def render_cover(
 ) -> None:
     """视频号封面单独排版，不走 9:16 帧缩放，避免字被压扁。"""
     w, h = size
-    img = gradient_bg(w, h, theme["bg_top"], theme["bg_bottom"], theme.get("grain", 6))
+    img = make_bg(w, h, theme)
     d = ImageDraw.Draw(img)
     margin = int(w * 0.085)
 
@@ -378,13 +402,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     path.write_text("".join(lines), encoding="utf-8")
 
 
-def build(ep_dir: Path, skip_tts: bool = False, theme_name: str = "ink", subtitles: bool = True) -> dict:
+def build(
+    ep_dir: Path,
+    skip_tts: bool = False,
+    theme_name: str = "ink",
+    subtitles: bool = True,
+    bg: str | None = None,
+) -> dict:
     cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     ep = json.loads((ep_dir / "episode.json").read_text(encoding="utf-8"))
     out = cfg["output"]
     size = (out["width"], out["height"])
     fps = out["fps"]
-    theme = THEMES[theme_name]
+    theme = dict(THEMES[theme_name])
+    if bg is not None:
+        theme["bg_image"] = bg
     brand = f"{cfg['channel']['name']} · {ep.get('topic', '金融科普')}"
 
     tmp = ensure_dir(ep_dir / "build")
@@ -486,6 +518,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("episode", help="episode 目录名或路径")
     ap.add_argument("--theme", default="ink", choices=sorted(THEMES), help="主题配色")
+    ap.add_argument("--bg", default=None, help="覆盖背景图路径（相对项目根或绝对路径）")
     ap.add_argument("--no-subs", action="store_true", help="不烧字幕")
     ap.add_argument("--keep", action="store_true", help="保留 build 中间件")
     args = ap.parse_args()
@@ -497,7 +530,7 @@ def main() -> int:
         print(f"找不到 {ep_dir}/episode.json", file=sys.stderr)
         return 2
 
-    info = build(ep_dir, theme_name=args.theme, subtitles=not args.no_subs)
+    info = build(ep_dir, theme_name=args.theme, subtitles=not args.no_subs, bg=args.bg)
     print(json.dumps(info, ensure_ascii=False, indent=2))
     if not args.keep:
         shutil.rmtree(ep_dir / "build", ignore_errors=True)

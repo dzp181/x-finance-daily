@@ -23,3 +23,12 @@ scripts/lipsync/third_party/
 # 成片体积大
 episodes/*/avatar/*.mp4
 episodes/*/avatar/*.wav
+
+# 背景原图可重新生成，只保留处理后的成品
+assets/bg/src/
+
+# 同一期的分支版本（本地对比用）
+episodes/*/video-frost.mp4
+episodes/*/video-beam.mp4
+episodes/*/cover-frost.png
+episodes/*/cover-beam.png

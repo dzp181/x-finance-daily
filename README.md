@@ -59,8 +59,23 @@ python3 scripts/publish.py 2026-11-18-gold-vs-rates --fill
 
 ### 主题与字幕
 
-`--theme ink`（深墨，默认）或 `--theme paper`（米白）。两版会输出成
-`video.mp4` / `video-paper.mp4`，封面同理，方便直接对比。
+`--theme ink`（深墨，默认）落地为 `video.mp4` / `cover.png`，其他主题输出带后缀，方便对比。
+
+`ink` 主题的底图是 `assets/bg/ink-frost.png`——一张极暗的磨砂墙面加右上侧光，
+不是纯渐变。想换背景：
+
+```bash
+# 1) 生成一张 9:16 的底图（可灵文生图 / 本地出图都行），放进 assets/bg/src/
+# 2) 处理：去水印 → 裁 9:16 → 底部压暗，输出成品
+.venv-lipsync/bin/python scripts/prep_bg.py assets/bg/src/xxx.png assets/bg/ink-frost.png
+
+# 3) 临时换一版不落地（对比用）
+python3 scripts/build_episode.py <slug> --bg assets/bg/ink-beam.png
+```
+
+`prep_bg.py` 三件事的动机：生成图右下角自带「AI生成」水印，暗底上直接用会露出来，
+所以做 inpaint；原图是 2:3、成片要 9:16，按「顶部对齐」裁——光源在右上，裁底部才不伤光；
+底部再叠 30% 垂直压暗，给烧字幕留对比度。
 
 字幕默认烧进画面，时间轴来自 edge-tts 的 boundary 事件：
 
@@ -72,18 +87,27 @@ python3 scripts/publish.py 2026-11-18-gold-vs-rates --fill
 
 ### 背景为什么带颗粒
 
-纯渐变在 8-bit H.264 下会出横向色带（每 100px 跳一档）。渲染时叠一层零均值高斯噪声抖动，
-`ink` 用 σ=6，`paper` 用 σ=2 —— 浅色底噪点太强会显脏。
+纯渐变在 8-bit H.264 下会出横向色带（每 100px 跳一档）。没有背景图时（`paper` 主题）
+渲染会叠一层零均值高斯噪声抖动，`ink` 用 σ=6，`paper` 用 σ=2 —— 浅色底噪点太强会显脏。
+
+用背景图时不额外加噪，图本身自带颗粒，再做 resize 反而会糊。
 
 ### 换成自己的声音
 
-`build_episode.py` 默认用 macOS 的 `Tingting` 音色。想用自己的声音：
+音色写在 `episode.json` 的 `tts` 字段，当前是 `edge` 引擎的 `zh-CN-XiaoxiaoNeural`（+10%）：
+
+```json
+"tts": { "engine": "edge", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+10%" }
+```
+
+`engine` 填 `say` 就退回 macOS 离线音色（`voice` 填 `Tingting`，`rate` 填数字如 178）。
+合成结果按（文本 + 音色 + 语速）缓存在 `episodes/<slug>/.cache/`，改文字才重新请求。
+
+想用真人录音：
 
 1. 按 `script.md` 的时间表逐句录，一句一个文件，`s0.m4a` … `s9.m4a`
-2. 丢进 `episodes/<slug>/build/`
-3. `python3 scripts/build_episode.py <slug> --skip-tts`
-
-（`--skip-tts` 复用的是 `build/s*.wav`；先用 ffmpeg 把 m4a 转成 44.1k 单声道 wav。）
+2. 用 ffmpeg 转成 44.1k 单声道 wav，覆盖 `build/s0.wav` … `build/s9.wav`
+3. 先跑一次 `--keep` 生成 `build/` 目录，再替换 wav
 
 ## episode.json 字段
 
@@ -98,8 +122,7 @@ python3 scripts/publish.py 2026-11-18-gold-vs-rates --fill
   "tags": ["黄金", "利率"],
   "description": "发布页描述，含免责声明",
   "topic": "金融科普",
-  "voice": "Tingting",
-  "rate": 178,
+  "tts": { "engine": "edge", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+10%" },
   "scenes": [{ "caption": "画面大字", "text": "这一句的口播词" }]
 }
 ```
@@ -108,7 +131,11 @@ python3 scripts/publish.py 2026-11-18-gold-vs-rates --fill
 
 ---
 
-## 数字人主播（实验）
+## 数字人主播（实验，当前未启用）
+
+> 结论先说：**这条路验证过，效果不达发布标准，已回到「静态大字 + 烧字幕」的图片版。**
+> 原因是 Wav2Lip 的嘴部输出固定 96×96，放大到人脸尺寸约 6.6 倍，嘴周必然有一圈糊；
+> 静态帧看着还行，连续播放就是恐怖谷。下面代码保留，等换 MuseTalk 或走可灵时复用接口。
 
 让一张静态人像按口播音频说话，用于替代纯文字卡片。
 

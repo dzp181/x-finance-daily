@@ -1,0 +1,15 @@
+# 全局 gitignore 会忽略 README.md，这里显式取消
+!README.md
+
+.DS_Store
+__pycache__/
+*.pyc
+.build/
+
+# 抓取缓存可重建，不进仓库
+data/raw/
+data/tweets.jsonl
+data/watchlist.json
+
+# 渲染中间件
+episodes/*/build/

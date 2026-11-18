@@ -13,3 +13,4 @@ data/watchlist.json
 
 # 渲染中间件
 episodes/*/build/
+episodes/*/.cache/

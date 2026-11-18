@@ -29,6 +29,15 @@ MUTED = (150, 150, 150)
 ACCENT = (192, 57, 43)  # 红：中文财经语境里的"强调色"
 
 
+def ensure_dir(path: Path) -> Path:
+    """沙箱里 mkdir(exist_ok=True) 仍可能抛 EEXIST，这里兜一层。"""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except FileExistsError:
+        pass
+    return path
+
+
 def run(cmd: list[str]) -> None:
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -166,9 +175,54 @@ def render_cover(
     img.save(path, "PNG")
 
 
-def tts(text: str, voice: str, rate: int, aiff: Path, wav: Path) -> float:
-    run(["say", "-v", voice, "-r", str(rate), "-o", str(aiff), text])
-    run([FFMPEG, "-y", "-loglevel", "error", "-i", str(aiff), "-ar", "44100", "-ac", "1", str(wav)])
+def tts(text: str, ep: dict, aiff: Path, wav: Path, cache_dir: Path | None = None) -> float:
+    """合成一句语音并转成 44.1k 单声道 wav，返回时长。
+
+    engine = "edge" 走 edge-tts（自然，需联网）；否则走 macOS say（离线兜底）。
+    结果按 (文本, 音色, 语速) 缓存，重跑不再联网。
+    """
+    import hashlib
+    import time as _time
+
+    engine = (ep.get("tts") or {}).get("engine", "say")
+    conf = ep.get("tts") or {}
+    voice = conf.get("voice", "zh-CN-YunjianNeural")
+    rate = conf.get("rate", "+0%")
+
+    key = hashlib.sha1(f"{engine}|{voice}|{rate}|{text}".encode()).hexdigest()[:16]
+    if cache_dir is not None:
+        cached = cache_dir / f"{key}.wav"
+        if cached.exists():
+            wav.write_bytes(cached.read_bytes())
+            with wave.open(str(cached), "rb") as wf:
+                return wf.getnframes() / wf.getframerate()
+
+    if engine == "edge":
+        import asyncio
+
+        import edge_tts
+
+        mp3 = aiff.with_suffix(".mp3")
+        last: Exception | None = None
+        for attempt in range(4):
+            try:
+                asyncio.run(edge_tts.Communicate(text, voice, rate=rate).save(str(mp3)))
+                last = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                _time.sleep(2 * (attempt + 1))
+        if last is not None:
+            raise RuntimeError(f"edge-tts 连续失败: {last}")
+        run([FFMPEG, "-y", "-loglevel", "error", "-i", str(mp3), "-ar", "44100", "-ac", "1", str(wav)])
+    else:
+        run(["say", "-v", ep.get("voice", "Tingting"), "-r", str(ep.get("rate", 178)), "-o", str(aiff), text])
+        run([FFMPEG, "-y", "-loglevel", "error", "-i", str(aiff), "-ar", "44100", "-ac", "1", str(wav)])
+
+    if cache_dir is not None:
+        ensure_dir(cache_dir)
+        (cache_dir / f"{key}.wav").write_bytes(wav.read_bytes())
+
     with wave.open(str(wav), "rb") as wf:
         return wf.getnframes() / wf.getframerate()
 
@@ -181,11 +235,10 @@ def build(ep_dir: Path, skip_tts: bool = False) -> dict:
     fps = out["fps"]
     brand = f"{cfg['channel']['name']} · {ep.get('topic', '金融科普')}"
 
-    tmp = ep_dir / "build"
-    tmp.mkdir(exist_ok=True)
+    tmp = ensure_dir(ep_dir / "build")
+    cache_dir = ep_dir / ".cache"
     voice = ep.get("voice", "Tingting")
     rate = ep.get("rate", 178)
-
     segments, total = [], 0.0
     timings: list[float] = []
     for i, scene in enumerate(ep["scenes"]):
@@ -196,7 +249,7 @@ def build(ep_dir: Path, skip_tts: bool = False) -> dict:
             with wave.open(str(wav), "rb") as wf:
                 dur = wf.getnframes() / wf.getframerate()
         else:
-            dur = tts(scene["text"], voice, rate, aiff, wav)
+            dur = tts(scene["text"], ep, aiff, wav, cache_dir=cache_dir)
 
         render_frame(
             png,

@@ -28,12 +28,18 @@ def main() -> int:
     total = ep.get("seconds") or sum(timings)
 
     # ---------- script.md ----------
+    tts_conf = ep.get("tts") or {}
+    if tts_conf.get("engine") == "edge":
+        voice_desc = f"edge-tts {tts_conf.get('voice', '')}（语速 {tts_conf.get('rate', '+0%')}）"
+    else:
+        voice_desc = f"macOS say {ep.get('voice', 'Tingting')}（语速 {ep.get('rate', 178)}）"
+
     lines = [
         f"# {ep['title']}",
         "",
         f"> {ep.get('topic', '金融科普')} · 竖屏口播 · 全长 {mmss(total)} · {ep['date']}",
         "",
-        f"画面风格：白底黑字，左侧红色竖条，逐句切换。配音：{ep.get('voice', 'Tingting')}。",
+        f"画面风格：白底黑字，左侧红色竖条，逐句切换。配音：{voice_desc}。",
         "",
         "| 时间 | 画面大字 | 口播 |",
         "| --- | --- | --- |",

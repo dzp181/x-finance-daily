@@ -32,3 +32,6 @@ episodes/*/video-frost.mp4
 episodes/*/video-beam.mp4
 episodes/*/cover-frost.png
 episodes/*/cover-beam.png
+
+# ima 打包产物（可重建）
+outbox/

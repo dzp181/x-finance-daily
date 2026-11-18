@@ -30,6 +30,8 @@ scripts/fetch.py         读 x2ding 的 watchlist，从 ntfy 拉推文，落 dat
 scripts/curate.py        打分排序，输出候选
 scripts/build_episode.py episode.json → video.mp4 + cover.png（本地 TTS，无网络）
 scripts/render_docs.py   episode.json → script.md + caption.md
+scripts/pack_ima.py      一期 → outbox/（ima 能收的 md + mp3 + manifest）
+scripts/ima_put.py       执行 create_media 给的 presigned PUT
 scripts/publish.py       半自动填视频号发布页
 episodes/<date>-<slug>/  一期一个目录
 ```
@@ -66,6 +68,7 @@ python3 scripts/run.py build --crf 16       # ③ 出片 + 出文案，产物路
 | `run.py build <slug>` | 指定一期 |
 | `run.py status` | 每期进度：草稿 / 待出片 / 已出片，附时长体积 |
 | `run.py all` | new + build，草稿没补齐会自动停下 |
+| `run.py sync` | 打包成 ima 能收的形态（文案 md + 口播 mp3）到 `outbox/` |
 
 草稿不完整时 `build` 会拒绝出片并告诉你缺什么（`scenes` 为空、还有 `TODO`、某句缺 `caption`），
 不会产出半成品视频。
@@ -75,6 +78,39 @@ python3 scripts/run.py build --crf 16       # ③ 出片 + 出文案，产物路
 项目里带了一个技能 `x-finance-daily`（`.workbuddy/skills/x-finance-daily/SKILL.md`），
 下次在 WorkBuddy 里说 **「生成今天这期」** 就会自动走完：选题 → 写文案 → 出片 → 给发布清单。
 文案规范和红线（只讲机制、不给点位、数字必须有出处）都写在那份技能里，不用每次重复交代。
+
+### 定时自动（每天 09:00 / 18:00）
+
+两条 WorkBuddy 定时任务，无人值守跑完「选题 → 文案 → 出片 → 同步 ima」：
+
+| 档位 | 时间 | 目录 |
+| --- | --- | --- |
+| 早间 | 每天 09:00 | `episodes/<date>-am` |
+| 晚间 | 每天 18:00 | `episodes/<date>-pm` |
+
+`run.py new` 按当前小时自动决定 `-am` / `-pm`，同一天两期不会互相覆盖；
+已做过的推文（`episode.json` 的 `seed.url` + `sources.md` 里的链接）会被自动排除，
+晚间不会撞早间的题。
+
+跑完产出：
+
+```
+episodes/2026-11-19-am/
+  episode.json  video.mp4  cover.png  script.md  caption.md  sources.md  publish.md
+```
+
+**同步到 ima**：目标知识库是「视频号」（`ima_kb_0eJCBmd6`），每期两条：
+
+```
+2026-11-19 早间 | <标题>.md          ← 发布文案 + 口播全文 + 分镜 + 资料出处
+2026-11-19 早间 | <标题> · 口播音频.mp3
+```
+
+视频文件**进不了 ima**——`create_media` 的类型白名单里没有 mp4，`video/mp4` 和
+`application/mp4` 都返回「不支持的 content_type」。所以成片留在本地，发布时手动上传视频号。
+
+上传是三步：`create_media`（拿 presigned_url）→ `scripts/ima_put.py`（PUT 到 COS）→
+`add_knowledge`（入库）。中间那次 PUT 是纯 HTTP，脚本能做；前后两步只能走 MCP 工具。
 
 ### 分步跑（调试用）
 

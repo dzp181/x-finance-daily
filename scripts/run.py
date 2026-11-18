@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,11 @@ def load_config() -> dict:
 
 def today() -> str:
     return datetime.now(CST).strftime("%Y-%m-%d")
+
+
+def auto_slot() -> str:
+    """一天两期：12 点前算 am，之后算 pm，同一天不会互相覆盖。"""
+    return "am" if datetime.now(CST).hour < 12 else "pm"
 
 
 def sh(cmd: list[str]) -> int:
@@ -99,12 +105,36 @@ def guess_tags(text: str, cfg: dict, k: int = 4) -> list[str]:
     return tags or ["金融科普"]
 
 
+def used_seeds() -> set[str]:
+    """已经做过选题的推文 URL，避免一天两期选到同一条。"""
+    used = set()
+    for d in EPISODES.glob("*"):
+        f = d / "episode.json"
+        if f.exists():
+            try:
+                ep = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                ep = {}
+            url = (ep.get("seed") or {}).get("url")
+            if url:
+                used.add(url)
+        src = d / "sources.md"
+        if src.exists():
+            used.update(re.findall(r"https://x\.com/[A-Za-z0-9_]+/status/\d+", src.read_text("utf-8")))
+    return used
+
+
 def cmd_new(args) -> int:
     cfg = load_config()
     ranked = load_ranked(cfg, args.offline)
     if not ranked:
         print("今天没有正分候选，换个窗口：python3 scripts/fetch.py --since 24h")
         return 1
+
+    used = set() if args.allow_repeat else used_seeds()
+    if used:
+        ranked = [r for r in ranked if r.get("url") not in used]
+        print(f"已排除 {len(used)} 条做过的选题")
 
     print(f"\n候选 {len(ranked)} 条，前 {args.top}：\n")
     for i, r in enumerate(ranked[: args.top], 1):
@@ -118,11 +148,12 @@ def cmd_new(args) -> int:
         return 1
     seed = ranked[idx - 1]
 
-    slug = args.slug or "draft"
+    slug = args.slug or auto_slot()
     ep_dir = EPISODES / f"{today()}-{slug}"
     ep_file = ep_dir / "episode.json"
     if ep_file.exists() and not args.force:
         print(f"\n{ep_dir.name} 已存在。要重建加 --force，要出片跑：python3 scripts/run.py build {ep_dir.name}")
+        args.episode = ep_dir.name
         return 0
 
     ep_dir.mkdir(parents=True, exist_ok=True)
@@ -184,6 +215,7 @@ def cmd_new(args) -> int:
     print("  " + seed_text.replace("\n", "\n  "))
     print("\n下一步：补 title / scenes[]（每句 text 6–10 秒，caption ≤ 14 字两行），然后")
     print(f"  python3 scripts/run.py build {ep_dir.name} --crf 16")
+    args.episode = ep_dir.name
     return 0
 
 
@@ -248,7 +280,7 @@ def cmd_all(args) -> int:
     rc = cmd_new(args)
     if rc != 0:
         return rc
-    ep_dir = find_episode(args.slug and f"{today()}-{args.slug}")
+    ep_dir = find_episode(getattr(args, "episode", None))
     if not ep_dir:
         return 0
     ok, why = is_ready(ep_dir)
@@ -257,6 +289,27 @@ def cmd_all(args) -> int:
         return 0
     args.episode = ep_dir.name
     return cmd_build(args)
+
+
+def cmd_sync(args) -> int:
+    """打包成 ima 能收的形态（md + 口播音频），并打印上传清单。"""
+    sys.path.insert(0, str(SCRIPTS))
+    import pack_ima  # noqa: PLC0415
+
+    ep_dir = find_episode(args.episode)
+    if not ep_dir:
+        print("找不到这一期的 episode.json")
+        return 1
+    if not (ep_dir / "video.mp4").exists():
+        print(f"{ep_dir.name} 还没有 video.mp4，先 build")
+        return 1
+    m = pack_ima.pack(ep_dir, with_audio=not args.no_audio, with_cover=args.with_cover)
+    print(f"打包完成 → outbox/{ep_dir.name}")
+    for f in m["files"]:
+        print(f"  {f['name']}  ({f['size'] / 1024:.0f} KB, {f['content_type']})")
+    print(f"目标知识库：ima「视频号」 {m['knowledge_base_id']}")
+    print("上传三步：create_media → scripts/ima_put.py → add_knowledge")
+    return 0
 
 
 # ---------------------------------------------------------------- 入口
@@ -271,6 +324,7 @@ def main() -> int:
         p.add_argument("--pick", type=int, default=1, help="用第几名候选做草稿")
         p.add_argument("--slug", default=None, help="episode 目录后缀，默认 draft")
         p.add_argument("--force", action="store_true", help="覆盖已存在的草稿")
+        p.add_argument("--allow-repeat", action="store_true", help="允许选已做过的推文")
 
     p_new = sub.add_parser("new", help="抓取 + 候选 + 建草稿")
     common(p_new)
@@ -290,6 +344,12 @@ def main() -> int:
     p_all.add_argument("--crf", type=int, default=16)
     p_all.add_argument("--theme", default="ink")
     p_all.set_defaults(func=cmd_all)
+
+    p_sync = sub.add_parser("sync", help="打包成 ima 能收的形态（md + 口播音频）")
+    p_sync.add_argument("episode", nargs="?", default=None, help="不给就取最新一期")
+    p_sync.add_argument("--no-audio", action="store_true")
+    p_sync.add_argument("--with-cover", action="store_true")
+    p_sync.set_defaults(func=cmd_sync)
 
     args = ap.parse_args()
     if not getattr(args, "func", None):

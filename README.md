@@ -52,10 +52,15 @@ pip install pillow imageio-ffmpeg edge-tts
 python3 scripts/fetch.py                          # 拉 48 小时推文
 python3 scripts/curate.py --top 20                # 看候选
 # 手动新建 episodes/<date>-<slug>/episode.json
-python3 scripts/build_episode.py 2026-11-18-gold-vs-rates --theme ink
+python3 scripts/build_episode.py 2026-11-18-gold-vs-rates --crf 16
 python3 scripts/render_docs.py 2026-11-18-gold-vs-rates
-python3 scripts/publish.py 2026-11-18-gold-vs-rates --fill
+# 发布：见 episodes/<slug>/publish.md，手动发
 ```
+
+`--crf 16` 是给上传用的画质档。默认 20 只够本地看——视频号会对上传文件再压一次，
+暗背景渐变在二次压缩下最容易出色带，所以源文件要给足码率（当前 1.0 Mbps，11 MB / 76 秒）。
+
+`scripts/publish.py` 是早期写的浏览器半自动填写脚本，当前流程改手动发布，留作备用。
 
 ### 主题与字幕
 

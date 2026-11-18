@@ -408,6 +408,7 @@ def build(
     theme_name: str = "ink",
     subtitles: bool = True,
     bg: str | None = None,
+    crf: int = 20,
 ) -> dict:
     cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     ep = json.loads((ep_dir / "episode.json").read_text(encoding="utf-8"))
@@ -449,7 +450,8 @@ def build(
             FFMPEG, "-y", "-loglevel", "error",
             "-loop", "1", "-framerate", str(fps), "-i", str(png),
             "-i", str(wav),
-            "-c:v", "libx264", "-tune", "stillimage", "-preset", "medium",
+            # 中间件用 crf 16 近似无损，避免和最后的烧字幕编码叠成两次有损
+            "-c:v", "libx264", "-tune", "stillimage", "-preset", "medium", "-crf", "16",
             "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "1",
             "-pix_fmt", "yuv420p", "-shortest", "-t", f"{dur:.3f}",
             str(seg),
@@ -475,7 +477,7 @@ def build(
         run([
             FFMPEG, "-y", "-loglevel", "error", "-i", str(raw),
             "-vf", "ass=subs.ass",
-            "-c:v", "libx264", "-crf", "20", "-preset", "medium",
+            "-c:v", "libx264", "-crf", str(crf), "-preset", "medium",
             "-pix_fmt", "yuv420p", "-c:a", "copy",
             "-movflags", "+faststart", str(video),
         ], cwd=tmp)
@@ -519,6 +521,7 @@ def main() -> int:
     ap.add_argument("episode", help="episode 目录名或路径")
     ap.add_argument("--theme", default="ink", choices=sorted(THEMES), help="主题配色")
     ap.add_argument("--bg", default=None, help="覆盖背景图路径（相对项目根或绝对路径）")
+    ap.add_argument("--crf", type=int, default=20, help="画质：越小越清晰体积越大（上传建议 16）")
     ap.add_argument("--no-subs", action="store_true", help="不烧字幕")
     ap.add_argument("--keep", action="store_true", help="保留 build 中间件")
     args = ap.parse_args()
@@ -530,7 +533,7 @@ def main() -> int:
         print(f"找不到 {ep_dir}/episode.json", file=sys.stderr)
         return 2
 
-    info = build(ep_dir, theme_name=args.theme, subtitles=not args.no_subs, bg=args.bg)
+    info = build(ep_dir, theme_name=args.theme, subtitles=not args.no_subs, bg=args.bg, crf=args.crf)
     print(json.dumps(info, ensure_ascii=False, indent=2))
     if not args.keep:
         shutil.rmtree(ep_dir / "build", ignore_errors=True)

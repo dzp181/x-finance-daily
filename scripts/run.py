@@ -316,6 +316,18 @@ def cmd_sync(args) -> int:
     return 0
 
 
+def cmd_push(args) -> int:
+    """把成片与文案推到微信（企业微信群机器人 / 自建应用）。"""
+    cmd = [sys.executable, str(SCRIPTS / "notify.py")]
+    if args.episode:
+        cmd.append(args.episode)
+    if args.dry_run:
+        cmd.append("--dry-run")
+    if args.test:
+        cmd.append("--test")
+    return sh(cmd)
+
+
 # ---------------------------------------------------------------- 入口
 
 def main() -> int:
@@ -354,6 +366,12 @@ def main() -> int:
     p_sync.add_argument("--no-audio", action="store_true")
     p_sync.add_argument("--with-cover", action="store_true")
     p_sync.set_defaults(func=cmd_sync)
+
+    p_push = sub.add_parser("push", help="把成片与文案推到微信")
+    p_push.add_argument("episode", nargs="?", default=None, help="不给就取最新一期")
+    p_push.add_argument("--dry-run", action="store_true", help="只打印不发")
+    p_push.add_argument("--test", action="store_true", help="只发连通性测试")
+    p_push.set_defaults(func=cmd_push)
 
     args = ap.parse_args()
     if not getattr(args, "func", None):

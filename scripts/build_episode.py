@@ -173,6 +173,33 @@ def _draw_headline(
     return {"top": top, "bottom": top + block_h, "line_h": line_h, "font": f}
 
 
+def _draw_kicker(d: ImageDraw.ImageDraw, text: str, margin: int, y: int, w: int, theme: dict) -> None:
+    """栏目标签：一个小色块 + 一行小字，给每屏一个「章节」感。"""
+    f_k = load_font(FONT_HEAVY, int(w * 0.0245))
+    bb = f_k.getbbox(text)
+    th = bb[3] - bb[1]
+    sq = max(6, int(w * 0.010))
+    sq_y = y + bb[1] + (th - sq) // 2
+    d.rectangle([margin, sq_y, margin + sq, sq_y + sq], fill=theme["accent"])
+    d.text((margin + int(w * 0.026), y), text, font=f_k, fill=theme["muted"])
+
+
+def _draw_stat(d: ImageDraw.ImageDraw, stat: dict, margin: int, top: int, w: int, h: int, theme: dict) -> None:
+    """数据卡：一个大数字 + 一行注脚。数字必须来自 sources.md。"""
+    value = str(stat.get("value") or "")
+    label = str(stat.get("label") or "")
+    if not value:
+        return
+    d.rectangle([margin, top, margin + int(w * 0.085), top + 2], fill=theme["rule"])
+    f_v = load_font(FONT_HEAVY, int(w * 0.086))
+    d.text((margin, top + int(h * 0.020)), value, font=f_v, fill=theme["accent"])
+    if label:
+        bb = f_v.getbbox(value)
+        f_l = load_font(FONT_LIGHT, int(w * 0.0255))
+        d.text((margin, top + int(h * 0.020) + (bb[3] - bb[1]) + int(h * 0.020)), label,
+               font=f_l, fill=theme["muted"])
+
+
 def render_frame(
     path: Path,
     caption: str,
@@ -181,6 +208,10 @@ def render_frame(
     is_last: bool,
     disclaimer: str,
     theme: dict,
+    stat: dict | None = None,
+    kicker: str | None = None,
+    index: int | None = None,
+    total: int | None = None,
 ) -> None:
     w, h = size
     img = make_bg(w, h, theme)
@@ -190,13 +221,26 @@ def render_frame(
     f_brand = load_font(FONT_LIGHT, int(w * 0.028))
     d.text((margin, int(h * 0.062)), brand, font=f_brand, fill=theme["muted"])
 
+    # 顶部进度：细轨 + 已播部分着色，让「看到第几屏」可感知
+    if index is not None and total:
+        yb = int(h * 0.101)
+        d.rectangle([margin, yb, w - margin, yb + 2], fill=theme["rule"])
+        prog = min(1.0, (index + 1) / total)
+        d.rectangle([margin, yb, margin + int((w - margin * 2) * prog), yb + 2], fill=theme["accent"])
+
+    if kicker:
+        _draw_kicker(d, kicker, margin, int(h * 0.126), w, theme)
+
     # 中文字块略高于几何中心：底部要留给字幕和视频号自身 UI
     _draw_headline(
         d, caption, w - margin * 2 - int(w * 0.055),
         start_fs=int(w * 0.098), min_fs=int(w * 0.050),
-        max_block_h=int(h * 0.36), center_y=int(h * 0.420),
+        max_block_h=int(h * 0.30), center_y=int(h * (0.355 if stat else 0.405)),
         left_pad=margin, theme=theme,
     )
+
+    if stat:
+        _draw_stat(d, stat, margin, int(h * 0.560), w, h, theme)
 
     if is_last:
         f_small = load_font(FONT_LIGHT, int(w * 0.022))
@@ -444,6 +488,10 @@ def build(
             is_last=(i == len(ep["scenes"]) - 1),
             disclaimer=cfg["channel"]["disclaimer"],
             theme=theme,
+            stat=scene.get("stat"),
+            kicker=scene.get("kicker"),
+            index=i,
+            total=len(ep["scenes"]),
         )
 
         run([

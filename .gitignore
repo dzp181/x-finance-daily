@@ -35,3 +35,8 @@ episodes/*/cover-beam.png
 
 # ima 打包产物（可重建）
 outbox/
+
+# social-auto-upload 运行环境（体积大，可重建）
+vendor/social-auto-upload/
+.venv-sau/
+.browsers/

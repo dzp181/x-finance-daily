@@ -60,7 +60,8 @@ def ffmpeg_exe() -> str:
 def slot_of(ep_dir: Path) -> str:
     suffix = ep_dir.name.split("-", 3)[-1] if ep_dir.name.count("-") >= 3 else ""
     for key, label in SLOTS:
-        if suffix == key:
+        # am / pm 的衍生档（如 am-v2 返工版）仍归同一档
+        if suffix == key or suffix.startswith(f"{key}-"):
             return label
     return "首期"
 

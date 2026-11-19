@@ -32,7 +32,11 @@ scripts/build_episode.py episode.json → video.mp4 + cover.png（本地 TTS，�
 scripts/render_docs.py   episode.json → script.md + caption.md
 scripts/pack_ima.py      一期 → outbox/（ima 能收的 md + mp3 + manifest）
 scripts/ima_put.py       执行 create_media 给的 presigned PUT
-scripts/publish.py       半自动填视频号发布页
+scripts/push_draft.sh    入口：把一期存进视频号草稿箱（清 PYTHONPATH + 指定浏览器目录）
+scripts/push_draft.py    组描述/标题/封面，调 vendor 里的 tencent uploader（is_draft=True）
+scripts/setup_sau.sh     一次性装 social-auto-upload 运行环境
+scripts/publish.py       bsk 半自动填发布页（iframe 里点不中，已被 push_draft 取代）
+vendor/social-auto-upload/  第三方视频号 uploader（gitignore，可重建）
 episodes/<date>-<slug>/  一期一个目录
 ```
 
@@ -79,14 +83,14 @@ python3 scripts/run.py build --crf 16       # ③ 出片 + 出文案，产物路
 下次在 WorkBuddy 里说 **「生成今天这期」** 就会自动走完：选题 → 写文案 → 出片 → 给发布清单。
 文案规范和红线（只讲机制、不给点位、数字必须有出处）都写在那份技能里，不用每次重复交代。
 
-### 定时自动（每天 09:00 / 18:00）
+### 定时自动（每天 10:00 / 17:00）
 
-两条 WorkBuddy 定时任务，无人值守跑完「选题 → 文案 → 出片 → 同步 ima」：
+两条 WorkBuddy 定时任务，无人值守跑完「选题 → 文案 → 出片 → 同步 ima → 存视频号草稿」：
 
 | 档位 | 时间 | 目录 |
 | --- | --- | --- |
-| 早间 | 每天 09:00 | `episodes/<date>-am` |
-| 晚间 | 每天 18:00 | `episodes/<date>-pm` |
+| 早间 | 每天 10:00 | `episodes/<date>-am` |
+| 晚间 | 每天 17:00 | `episodes/<date>-pm` |
 
 `run.py new` 按当前小时自动决定 `-am` / `-pm`，同一天两期不会互相覆盖；
 已做过的推文（`episode.json` 的 `seed.url` + `sources.md` 里的链接）会被自动排除，
@@ -146,6 +150,61 @@ ima 收不了 mp4，所以成片另外往 **WorkBuddy 资料库** 里放一份�
 
 脚本给的兜底：`pack_ima.py` 除了有声归档版，还会顺手做一份 `_归档_无语音.mp4`；
 自动化里先传有声版，被拦就换无语音版试一次，再不过就跳过——只记一行「未过审」，不硬试。
+
+### 存进视频号草稿箱（不点发表）
+
+发布页那张表单在 iframe 里，bsk 的 click 会被「目标被遮挡」拦死——这条路走不通。
+改用 [dreammis/social-auto-upload](https://github.com/dreammis/social-auto-upload)：它用
+patchright 遍历所有 frame 找 `input[type=file]` 再 `set_input_files`，能过；而且原生支持
+`is_draft=True`，最后点的是「保存草稿」而不是「发表」。
+
+一次性安装（约 500MB，落在项目内并已 gitignore）：
+
+```bash
+bash scripts/setup_sau.sh          # 克隆 vendor、建 .venv-sau(3.12)、装 chromium 到 .browsers
+bash scripts/push_draft.sh --login # 扫码一次，cookie 存 vendor/cookies/tencent_doge.json
+```
+
+之后每期：
+
+```bash
+bash scripts/push_draft.sh                 # 最新一期
+bash scripts/push_draft.sh 2026-11-19-am   # 指定一期
+bash scripts/push_draft.sh <期> --dry-run  # 只打印将要提交的内容
+bash scripts/push_draft.sh <期> --show     # 弹出浏览器，盯着它跑
+```
+
+它会自动完成：上传 `video.mp4` → 描述（首行标题句 + 正文 + 话题）→ 短标题 →
+3:4 封面 `cover.png` → 视频标注「含AI生成内容」→ 点「保存草稿」。
+
+它**不会**做的两件事：**点发表**（留给你），以及**清空位置**——如果上一次发布留过
+定位，草稿里可能带着，发表前自己确认一下。
+
+跑不起来时先看这两点：
+
+- 必须用 `scripts/push_draft.sh` 入口。WorkBuddy 注入的 `PYTHONPATH` 里有 sandbox
+  `sitecustomize`，会让三方库的 `mkdir(exist_ok=True)` 抛 `EEXIST`，脚本靠 `env -u PYTHONPATH` 绕开。
+- 浏览器必须装在项目内 `.browsers`（`PLAYWRIGHT_BROWSERS_PATH`），装到 `~/Library`
+  会被沙箱的 safe-delete 拦在最后一步 `__dirlock` 上。
+
+cookie 失效时会明确报「cookie 已失效」，重跑 `--login` 扫一次即可。
+
+### 推送到微信（暂缓，未接入自动化）
+
+`scripts/notify.py` 能把一期的文案、封面、成片推到微信（自建应用可推视频，群机器人只能推文字 + 封面），
+入口 `python3 scripts/run.py push [期目录]`，凭据填 `config.json` 的 `notify.wecom`。
+
+**当前没接进定时任务**，原因：整条产线（ffmpeg 渲染、edge-tts、素材）都跑在本机，电脑不开机时连片都出不来，
+推送通道再稳也没内容可推。要真正做到「手机随时能收」，得先把产线搬上常开的服务器，参见下面「云端化」。
+
+在那之前，成品的云端副本已经有两份，手机端可看：ima「视频号」知识库、资料库「视频号」文件夹。
+
+### 云端化（待评估）
+
+若要让产线脱离本机，思路是搬到常开的机器（现有腾讯云 `112.74.95.74` 已在跑 bnapp 的刷新 cron）：
+装 python3 + ffmpeg + edge-tts，放一份 assets，用 cron 定时跑 `run.py`，出片后由服务器直接推送。
+需要解决的三件事：素材同步（3.5GB）、选题抓取要走代理、以及 WorkBuddy 侧的 ima / 资料库 / LibraryUpload
+都是 MCP 工具，服务器上没有，得改成用 API key 走 HTTP。工作量不小，先不动。
 
 ### 分步跑（调试用）
 

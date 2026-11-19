@@ -40,3 +40,6 @@ outbox/
 vendor/social-auto-upload/
 .venv-sau/
 .browsers/
+
+# WorkBuddy 工作记忆与自动化状态，不进仓库
+.workbuddy/

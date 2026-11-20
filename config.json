@@ -46,32 +46,36 @@
     "cluster_similarity": 0.34,
     "cluster_min_shared": 2,
     "fit": {
-      "deal": 0.85,
-      "deal_cap": 4.0,
-      "calc": 2.6,
+      "deal": 0.5,
+      "deal_cap": 2.5,
+      "calc": 1.5,
       "mapping": 0.7,
       "mapping_cap": 2.2,
       "first_hand": 0.6,
       "first_hand_cap": 2.0,
-      "contrast": 1.5,
+      "contrast": 2.5,
       "opinion": -3.0,
       "opinion_cap": -6.0,
       "broadcast": -4.0,
       "stale": -1.8,
       "listing": -2.5,
-      "stock": -3.0
+      "stock": -3.0,
+      "insight": 1.0,
+      "insight_cap": 3.0,
+      "viewpoint": 1.5
     },
     "kind_bonus": {
       "拆账": 1.6,
       "一手": 1.2,
       "算账": 1.0,
-      "背离": 0.8,
+      "背离": 1.2,
       "映射": 0.3,
       "机制": 0.0,
       "盘面": -3.0,
       "观点": -2.0,
       "清单": -2.0,
-      "个股": -2.5
+      "个股": -2.5,
+      "洞察": 1.8
     },
     "trusted_accounts": [
       "cnfinancewatch",
@@ -169,6 +173,7 @@
       "赚麻了",
       "爆仓了哈哈"
     ],
-    "cap_scope": 8
+    "cap_scope": 8,
+    "viewpoint_min_chars": 200
   }
 }

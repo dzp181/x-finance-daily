@@ -62,6 +62,28 @@ MAPPING_WORDS = [
     "人民币", "汇率", "美元指数", "房贷", "存款", "理财", "黄金", "油价", "通胀",
     "关税", "出口", "映射", "传导", "国内", "老百姓", "消费", "工资", "社保",
 ]
+# ---- v3.2 认知维度：解释现象和背后原因，让人学到东西 ------------------
+# 标尺是「黄金跌 30%，怕的不是战争是利率」那一类：
+# 先抛反常识现象，再拆机制，最后给一句能带走的认知。
+# 洞察词：直接给出「背后原因/本质」的信号——这是「学到东西」的核心标志。
+INSIGHT_WORDS = [
+    "本质是", "原因在于", "关键在于", "归根结底", "背后的逻辑",
+    "背后的原因", "之所以", "这解释了", "驱动力", "决定于", "取决于",
+    "本质", "逻辑是", "机制是", "真正的", "要害", "症结", "根源", "源于",
+    # 财经博主的写法：不写「本质是」，写「核心是/问题在/定价权从X回到Y」
+    "核心是", "核心问题", "问题在于", "问题不是", "真正的问题", "关键是",
+    "定价权", "说白了", "实质", "底层逻辑", "反映的是", "体现的是",
+    "而是", "回到",
+]
+# 观点源：高手自己在讲（不是转述新闻）。要求正文够长，滤掉直播预告。
+VIEWPOINT_WORDS = [
+    "我的判断", "个人理解", "聊聊", "我的看法", "我认为", "个人角度",
+    "说说我的", "我的理解", "先说结论", "几点理解", "谈谈我的", "我的观点",
+    "我倾向于", "我的结论",
+]
+# 反常识：只保留强反差词。「不是/并不」太弱，几乎每条都有，不作数。
+CONTRAST_WORDS = ["反而", "却", "居然", "意想不到", "分化", "背离", "一边"]
+
 # 一手信源分两层（v3.1）：规则层要加分，个股层要降权。
 # 用户发小红书/视频号，30+ 受众明确不喜欢「分析个股」——
 # 一家公司的财报电话会拆得再细，落点也只是那一家公司，不是能复用的市场机制。
@@ -184,6 +206,19 @@ def score_detail(item: dict, cfg: dict, account_volume: dict | None = None) -> d
 
     # ---- v3 受众契合：拆得开 / 算得清 / 跟他有关
     fw = sc.get("fit", {})
+    # ---- v3.2 认知维度 ----
+    insight_hits = [k for k in INSIGHT_WORDS if k in text]
+    parts["insight"] = round(
+        min(float(fw.get("insight_cap", 3.0)), float(fw.get("insight", 1.0)) * len(set(insight_hits))), 2
+    )
+
+    vp_hits = [k for k in VIEWPOINT_WORDS if k in text]
+    # 观点源只在正文够长时算：短预告「聊聊上市姿势」不是加工，是广告。
+    if vp_hits and n >= int(sc.get("viewpoint_min_chars", 200)):
+        parts["viewpoint"] = float(fw.get("viewpoint", 1.5))
+    else:
+        parts["viewpoint"] = 0.0
+
     deal_hits = [k for k in DEAL_WORDS if k in text]
     parts["deal"] = round(
         min(float(fw.get("deal_cap", 4.0)), float(fw.get("deal", 0.85)) * len(deal_hits)), 2
@@ -292,7 +327,7 @@ def score_detail(item: dict, cfg: dict, account_volume: dict | None = None) -> d
         parts["url"] = 0.3
 
     fit_keys = ("deal", "calc", "mapping", "first_hand", "stock", "contrast",
-                "opinion", "broadcast", "listing")
+                "insight", "viewpoint", "opinion", "broadcast", "listing")
     return {
         "score": round(sum(parts.values()), 2),
         "parts": parts,
@@ -309,6 +344,8 @@ def score_detail(item: dict, cfg: dict, account_volume: dict | None = None) -> d
             "mapping_hits": mapping_hits,
             "first_hand_hits": fh_hits,
             "stock_hits": stock_hits,
+            "insight_hits": sorted(set(insight_hits)),
+            "viewpoint_hits": vp_hits,
             "contrast_hits": contrast_hits,
             "assets": assets,
             "opinion_hits": opinion_hits,
@@ -323,11 +360,11 @@ def score(item: dict, cfg: dict, account_volume: dict | None = None) -> float:
 
 
 # 内容形态：决定它在选题配比里占什么位置，不是质量高低
-KINDS = ("拆账", "一手", "个股", "背离", "算账", "映射", "机制", "清单", "盘面", "观点")
+KINDS = ("洞察", "背离", "拆账", "一手", "个股", "算账", "映射", "机制", "清单", "盘面", "观点")
 
 
 def kind_of(parts: dict) -> str:
-    """看分数构成判断形态。拆账/一手/背离优先，个股和盘面、观点直接标出来。"""
+    """看分数构成判断形态。负面形态先判，洞察/背离优先于拆账/算账。"""
     if parts.get("broadcast", 0) < 0:
         return "盘面"
     if parts.get("listing", 0) < 0:
@@ -336,7 +373,13 @@ def kind_of(parts: dict) -> str:
         return "观点"
     if parts.get("stock", 0) < 0:
         return "个股"
+    # 能解释现象和原因的内容，才是这个频道要的；拆账/算账只是手段。
+    if parts.get("insight", 0) >= 2.0 or (parts.get("viewpoint", 0) > 0 and parts.get("mech", 0) >= 1.1):
+        return "洞察"
+    if parts.get("contrast", 0) > 0:
+        return "背离"
     if parts.get("deal", 0) >= 1.7:
+        return "拆账"
         return "拆账"
     if parts.get("first_hand", 0) >= 1.2:
         return "一手"

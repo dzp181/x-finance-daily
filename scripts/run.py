@@ -162,7 +162,9 @@ def cmd_new(args) -> int:
             return 1
         print(f"\n事件 {len(clusters)} 个，未做过 {len(todo)} 个，前 {min(args.top, len(todo))}：\n")
         for i, c in enumerate(todo[: args.top], 1):
-            print(f"[{i:>2}] {c['score']:>6.2f}  覆盖{c['coverage']}×{c['members']:<2}  @{c['rep']['handle']:<16} {c['label'][:60]}")
+            latest = f"{c['latest_age']:.0f}h" if isinstance(c.get('latest_age'), (int, float)) else "?"
+            print(f"[{i:>2}] {c['score']:>6.2f}  {c.get('kind','')}  覆盖{c['coverage']}×{c['members']:<2}  "
+                  f"{c['age_hours']:.0f}h→最新{latest}  @{c['rep']['handle']:<16} {c['label'][:50]}")
             print(f"     {c['rep']['url']}")
         idx = max(1, want_cluster)
         if idx > len(todo):

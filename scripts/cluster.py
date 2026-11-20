@@ -34,6 +34,22 @@ URL_RE = re.compile(r"https?://\S+")
 TICKER_RE = re.compile(r"\$[A-Za-z]{1,6}")
 PUNCT_RE = re.compile(r"[\s\W_]+", re.UNICODE)
 
+# 主体词表：用来提示「第 2 个和第 3 个其实是同一件事」，避免选题重复
+ENTITY_WORDS = [
+    "Anthropic", "OpenAI", "英伟达", "台积电", "腾讯", "阿里巴巴", "阿里", "沃尔玛",
+    "谷歌", "微软", "亚马逊", "特斯拉", "苹果", "Meta", "博通", "美光", "三星",
+    "海力士", "SpaceX", "币安", "德鲁肯米勒", "巴菲特", "美联储", "日本央行",
+    "比特币", "以太坊", "黄金", "白银", "原油", "铜", "科创板", "上证", "恒生",
+]
+
+
+def entities_of(text: str) -> list[str]:
+    """主体名 + 美元代码，按出现次数排序，取前两个。"""
+    hits = [w for w in ENTITY_WORDS if w in text]
+    hits.sort(key=lambda w: -text.count(w))
+    tick = [t for t in TICKER_RE.findall(text)]
+    return hits[:2] + tick[:2]
+
 
 def norm(text: str) -> str:
     t = URL_RE.sub(" ", text.lower())
@@ -114,7 +130,10 @@ def label_of(rep: dict, k: int = 3) -> str:
 
 def rank_clusters(rows: list[dict], cfg: dict, used: set[str] | None = None) -> list[dict]:
     """rows 需已带 score / signals / parts（curate.rank 的产物）。"""
+    import curate  # noqa: PLC0415
+
     used = used or set()
+    kind_bonus = cfg["scoring"].get("kind_bonus", {})
     out = []
     for members in cluster_rows(rows, cfg):
         members.sort(key=lambda r: r["score"], reverse=True)
@@ -123,11 +142,16 @@ def rank_clusters(rows: list[dict], cfg: dict, used: set[str] | None = None) -> 
         coverage = len(accounts)
         bonus = 0.8 * min(coverage - 1, 4) + 0.4 * math.log2(1 + len(members))
         done = any((m.get("url") or "") in used for m in members)
+        kind = curate.kind_of(rep.get("parts") or {})
+        # 簇内最新一条：代表推文可能是事件前的推演，最新那条才决定事件现在处在哪一步
+        newest = min(members, key=lambda m: m.get("signals", {}).get("age_hours") or 999)
         out.append(
             {
                 "id": hashlib.sha1((rep.get("url") or rep["text"]).encode()).hexdigest()[:8],
                 "label": label_of(rep),
-                "score": round(rep["score"] + bonus, 2),
+                "kind": kind,
+                "entities": entities_of(rep.get("text") or ""),
+                "score": round(rep["score"] + bonus + float(kind_bonus.get(kind, 0.0)), 2),
                 "rep_score": rep["score"],
                 "coverage": coverage,
                 "accounts": accounts,
@@ -136,6 +160,10 @@ def rank_clusters(rows: list[dict], cfg: dict, used: set[str] | None = None) -> 
                 "numbers": rep.get("signals", {}).get("numbers", []),
                 "mech_hits": rep.get("signals", {}).get("mech_hits", []),
                 "age_hours": rep.get("signals", {}).get("age_hours"),
+                "latest_age": newest.get("signals", {}).get("age_hours"),
+                "latest_handle": newest.get("handle"),
+                "latest_url": newest.get("url"),
+                "fit": rep.get("signals", {}).get("fit"),
                 "rep": {
                     "handle": rep.get("handle"),
                     "url": rep.get("url"),
@@ -152,40 +180,67 @@ def rank_clusters(rows: list[dict], cfg: dict, used: set[str] | None = None) -> 
         )
     out.sort(key=lambda c: (c["done"], -c["score"]))
 
-    # 账号多样性：同一账号最多占前 N 个事件位，剩下的排到后面仍可手动指定
-    cap = int(cfg["scoring"].get("per_account_clusters", 3))
-    kept, rest, seen = [], [], {}
+    # 同一主体降权：同一件事换个账号写，不该在清单里占两个位置
+    seen_ent: dict[str, str] = {}
     for c in out:
-        h = (c["rep"].get("handle") or "")
-        if seen.get(h, 0) >= cap:
-            rest.append(c)
-            continue
-        seen[h] = seen.get(h, 0) + 1
-        kept.append(c)
-    return kept + rest
+        dup = next((e for e in c["entities"] if e in seen_ent), None)
+        if dup:
+            c["score"] = round(c["score"] - 1.2, 2)
+            c["same_as"] = seen_ent[dup]
+        else:
+            if c["entities"]:
+                seen_ent[c["entities"][0]] = c["rep"]["url"]
+    out.sort(key=lambda c: (c["done"], -c["score"]))
+
+    # 账号多样性：前 scope 名里，同一账号超过 cap 个就扣分下移。
+    # 用扣分而不是跳过，是为了让清单的分数始终单调递减，读起来不像出错。
+    cap = int(cfg["scoring"].get("per_account_clusters", 3))
+    scope = int(cfg["scoring"].get("cap_scope", 8))
+    pen = float(cfg["scoring"].get("cap_penalty", 2.0))
+    for _ in range(2):
+        out.sort(key=lambda c: (c["done"], -c["score"]))
+        seen: dict[str, int] = {}
+        for c in out[:scope]:
+            h = c["rep"].get("handle") or ""
+            if seen.get(h, 0) >= cap and not c.get("capped"):
+                c["score"] = round(c["score"] - pen, 2)
+                c["capped"] = True
+            else:
+                seen[h] = seen.get(h, 0) + 1
+    out.sort(key=lambda c: (c["done"], -c["score"]))
+    return out
 
 
 def render_md(clusters: list[dict], meta: dict) -> str:
     lines = [
         f"# 选题清单 · {meta['stamp']}（{meta['slot']}）",
         "",
-        f"> 窗口 {meta['window']}｜原始 {meta['raw']} 条 → 粗筛 {meta['pool']} 条 → 事件 {len(clusters)} 个。",
-        "> 每个簇只列代表推文；`覆盖` 是同一事件有几个账号在讲，`已做` 表示之前某期用过。",
+        f"> 窗口 {meta['window']}｜原始 {meta['raw']} 条 → 粗筛 {meta['pool']} 条 → 事件 {meta.get('total', len(clusters))} 个"
+        f"（列出前 {len(clusters)}）。",
+        "> `形态` 是内容类型（拆账/一手/背离/算账/映射/机制/盘面/观点），`最新` 是簇内最新一条距今多久——",
+        "> 代表推文可能写于事件发生前，建稿前先看最新那条，事件走完了就换角度。",
         "",
     ]
     for i, c in enumerate(clusters, 1):
         flag = " · 已做" if c["done"] else ""
+        if c.get("same_as"):
+            idx = next((j for j, x in enumerate(clusters, 1) if x["rep"]["url"] == c["same_as"]), None)
+            flag += f" · 同一主体，另见第 {idx} 个" if idx else " · 同一主体（已在前列）"
         age = f"{c['age_hours']:.0f}h 前" if isinstance(c["age_hours"], (int, float)) else "?"
+        latest = f"{c['latest_age']:.0f}h 前" if isinstance(c["latest_age"], (int, float)) else "?"
         lines.append(
-            f"## {i}. [{c['score']}] {c['label']}{flag}"
+            f"## {i}. [{c['score']}] {c.get('kind', '?')}｜{c['label']}{flag}"
         )
         lines.append(
-            f"- @{c['rep']['handle']}｜{age}｜覆盖 {c['coverage']} 个账号｜簇内 {c['members']} 条"
+            f"- @{c['rep']['handle']}｜{age}｜覆盖 {c['coverage']} 个账号｜簇内 {c['members']} 条｜"
+            f"最新 {latest} @{c.get('latest_handle') or '?'}"
         )
-        lines.append(f"- 机制词：{'、'.join(c['mech_hits']) or '无'}")
+        lines.append(f"- 机制词：{'、'.join(c['mech_hits']) or '无'}｜受众契合 {c.get('fit')}")
         if c["numbers"]:
             lines.append(f"- 数字：{'、'.join(c['numbers'][:8])}")
         lines.append(f"- 链接：{c['rep']['url']}")
+        if c.get("latest_url") and c["latest_url"] != c["rep"]["url"]:
+            lines.append(f"- 最新一条：{c['latest_url']}")
         body = (c["rep"]["text"] or "").replace("\n", " ")
         lines.append("")
         lines.append("  " + body[:400] + ("…" if len(body) > 400 else ""))
@@ -236,6 +291,7 @@ def main() -> int:
         "window": cfg["source"]["since"],
         "raw": len(rows),
         "pool": len(curate.rank(rows, cfg)),
+        "total": len(all_clusters),
     }
 
     if args.json:
@@ -254,7 +310,11 @@ def main() -> int:
     print(f"清单：data/shortlist/{stem}.md\n")
     for i, c in enumerate(clusters, 1):
         flag = " 已做" if c["done"] else ""
-        print(f"[{i:>2}] {c['score']:>6.2f}  覆盖{c['coverage']}×{c['members']:<2}  @{c['rep']['handle']:<16}{flag}")
+        if c.get("same_as"):
+            flag += " 同主体"
+        latest = f"{c['latest_age']:.0f}h" if isinstance(c.get("latest_age"), (int, float)) else "?"
+        print(f"[{i:>2}] {c['score']:>6.2f}  {c.get('kind', ''):<2} 覆盖{c['coverage']}×{c['members']:<2}  "
+              f"{c['age_hours']:.0f}h→最新{latest}{flag}")
         print(f"     {c['label'][:70]}")
     print(f"\n选第 N 个建草稿：python3 scripts/run.py new --cluster N")
     return 0

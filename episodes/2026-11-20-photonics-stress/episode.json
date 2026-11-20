@@ -1,0 +1,122 @@
+{
+  "slug": "photonics-stress",
+  "date": "2026-11-20",
+  "status": "ready",
+  "title": "AI 就算降温，光学那笔账不一定跟着减",
+  "cover_caption": "AI降温\n光学未必跟着减",
+  "subtitle": "总资本开支和光学收入，从来不是一比一",
+  "short_title": "AI 就算降温，光学那笔账不一定跟着减",
+  "tags": [
+    "AI算力",
+    "光模块",
+    "资本开支",
+    "产业链",
+    "压力测试"
+  ],
+  "description": "AI 就算降温，光学那笔账不一定跟着减。\n\n先说一个反常识的结论：就算 AI 的总资本开支真的往下走，光学链的收入也不一定跟着减。\n\n有人给 AI 多头出了一份压力测试清单，四条同时恶化才算最坏情况：\n\n一、2028 年之后资本支出削减。\n二、算力搁浅，数据中心减速。\n三、财务状况恶化。\n四、加息两倍以上。\n\n然后是这份清单最值钱的地方——他说，如果这四条都在加速，那反而是一个机会。\n\n为什么？因为有一笔账被混在里面了。大家习惯用「总资本开支」去推光学链的收入，但这两件事之间不是一比一。\n\n物理上的约束是原因之一。数据中心建了很多算力，可铜缆链路限制了数据处理的可用性，一部分算力其实闲置着。光学消除的正是这个瓶颈。\n\n更关键的是两个经济激励：\n\n一个是省电。功率受限的数据中心，节省下来的电就等于能多支持一部分 GPU。据 CPO 的数据，光互连节省的电力大约够多撑百分之四点五的 GPU。\n\n一个是省内存。某些场景下，用光做内存池，可以省掉最多三成的 HBM4 开销。\n\n所以真实的关系更接近这样：如果 GPU 采购总量放缓，光学引擎、光源和交换机这些环节反而可能加速——因为省电、提利用率、省内存的动机更强了。\n\n这也解释了现在行业里的动作：马斯克在做并购，Marvell 收购了 Lumentum，三星在推光子代工，SK 海力士推 CPO。资本正在往这个方向挤，供给端的采购也在加速。\n\n一句话总结这个框架：价值会从「跟着总量走」的位置，迁移到「跟着架构变化走」的位置。\n\n本内容仅为信息分享，不构成任何投资建议。市场有风险，决策请独立判断。",
+  "topic": "市场机制",
+  "tts": {
+    "engine": "edge",
+    "voice": "zh-CN-XiaoxiaoNeural",
+    "rate": "+10%"
+  },
+  "seed": {
+    "handle": "aleabitoreddit",
+    "url": "https://x.com/aleabitoreddit/status/2123067177905643769",
+    "score": 9.2,
+    "text": "现在我们已接近 2027 年，最好对以下情况进行压力测试：\n\n1. 2028 年之后资本支出削减 \n2. 计算搁浅/DC 减速 \n3. 财务状况恶化（基本情况）\n4. 2倍以上加息\n\n并行工作，看看人工智能多头的估值会发生什么。 \n\n如果你看到这 4 个因素都在加速，我认为这是一个机会。 \n\n> 下一代光子学是光学内容和平均售价大幅增长的罕见领域之一，可以抵消总资本支出的削减。 \n\n每个人都在进入这个领域，包括埃隆·马斯克（Elon Musk）进行并购、Marvell、三星和其他进行并购的公司……我们还没有看到对新兴架构的经济影响，甚至还没有影响到从 Celestial 到 Ayar 及其供应商的参与者。 \n\n如果我们考虑一个 GPU 过剩但功率有限的场景：\n\n我们可能会看到加速器/GPU/ASIC 采购总量放缓，但光学引擎+光源+交换机玩家会看到加速。\n\n特别是作为替代低功耗网络的激励...因为不同的（廉价 BOM）光学架构提高了 GPU 利用率甚至 HBM 要求。  \n\n因此，价值会转移给架构转变的高贝塔玩家。 \n\n如果…\n\n原文：Now that we're close to 2027 it's a good idea to stress test downside scenarios where you have:\n\n1. Capex cuts past 2028 \n2. Stranded Compute / DC Slowdowns \n3. Finance deterioration (base case)\n4. 2x+ rate hikes\n\nWorking in parallel and see what happens with valuations of AI longs. \n\nIf you see acceleration despite all 4, I'd argue that's an opportunity. \n\n> Next-gen of photonics is one of the rare segments with an extreme rise in optical content and ASPs that can offset aggregate capex cuts. \n\nEveryone’s moving into that space, including Elon Musk doing M&A, Marvell, Samsung and others with M&A… and we haven’t seen economic impact on emerging architectures even hit players from Celestial to Ayar + their suppliers yet. \n\nIf we look at a scenario where there's excess GPUs but power constraints:\n\nWe might see slowdown in aggregate accelerator/GPU/ASIC procurement, but your optical engines + light sources + switches players see acceleration.\n\nEspecially as incentive to replace power inefficient networking... since different (cheap BOM) optical architectures improves GPU utilization or even HBM requirements.  \n\nSo value migrates to players more high-beta to architectural shifts. \n\nIf…",
+    "urls": [
+      "https://x.com/aleabitoreddit/status/2123067177905643769"
+    ]
+  },
+  "cluster": {
+    "id": "c7100a71",
+    "label": "估值·加息·hbm｜现在我们已接近 2027 年，最好对",
+    "coverage": 1,
+    "accounts": [
+      "aleabitoreddit"
+    ],
+    "members": 1,
+    "numbers": [
+      "2027",
+      "2028",
+      "2倍"
+    ],
+    "mech_hits": [
+      "因为"
+    ]
+  },
+  "picked_reason": "认知框架型选题，形态「洞察」，不落任何个股财报——是行业高手给出的可复用思考框架：AI 多头要同时面对四个下行条件，但光学链的价值不完全跟着总资本开支走。配套两条同作者推文提供机制（省电支持约 4.5% 更多 GPU、光学内存池省最多 30% HBM4 开支）和瓶颈原话（铜缆限制导致算力闲置）。",
+  "references": [
+    {
+      "handle": "aleabitoreddit",
+      "url": "https://x.com/aleabitoreddit/status/2123067177905643769",
+      "text": "接近 2027 年，应该对以下几种情况做压力测试：1）2028 年之后资本支出削减；2）计算搁浅/DC 减速；3）财务状况恶化（基本情况）；4）2 倍以上加息。並行工作，看看 AI 多头的估值会发生什么。如果看到这 4 个因素都在加速，认为这是一个机会。下一代光子学是光学内容和平均售价大幅增长的罕见领域之一，可以抵消总资本支出的削减。每个人都在进入这个领域，包括马斯克进行并购、Marvell、三星和其他进行并购的公司，还没有看到对新兴架构的经济影响，甚至还没影响到从 Celestial 到 Ayar 及其供应商的参与者。如果考虑一个 GPU 过剩但功率有限的场景：可能会看到加速器/GPU/ASIC 采购总量放缓，但光学引擎+光源+交换机玩家会看到加速，尤其是替代低功耗网络的激励——因为不同（廉价 BOM）的光学架构提高了 GPU 利用率甚至 HBM 要求。因此价值会转移给架构转变的高贝塔玩家。"
+    },
+    {
+      "handle": "aleabitoreddit",
+      "url": "https://x.com/aleabitoreddit/status/2123588783753048553",
+      "text": "研究过生物技术、物理人工智能、网络安全、太空等，仍坚信光学是最引人注目的机会。马斯克收购 Mesh、Marvell 收购 Lumentum、三星电子推光子代工、SK 海力士推 CPO 加 PIC IP 收购；私人风投仍大量投入即将上市的光学公司。供应采购正在加速：$SOI 一个季度内卖出 12 亿美元协议（此前每季度 2500 万美元收入）；$COHR 签署 200 亿美元长期协议；$LITE 卖光 2029 年产能。关于行业走向的行动是估值崩塌之上最大的信号。即使对总资本支出放缓、或加速器洪水与电网约束/许可下行做压力测试：存在提高 GPU 效率和电力利用率的经济激励（如 Lambda 的 CPO 数据表明节省的电量足以支持约 4.5% 的 GPU），对功率受限的数据中心如此；存在降低昂贵 HBM4 需求的经济激励（如 Marvell 估计通过光学内存池可节省高达 30% 的费用），对内存受限的场景如此。"
+    },
+    {
+      "handle": "aleabitoreddit",
+      "url": "https://x.com/aleabitoreddit/status/2123335230870392843",
+      "text": "同账号另一条推文转述的 SOI 财报原话：「人工智能数据中心已经建立了强大的计算能力，但由于铜线链路限制了数据处理的可用性，其中一些计算能力仍然闲置。光学消除了这个瓶颈。」并重申「总资本支出不与光学部门应用 1:1，因为光学位移可以提高 GPU 利用率」。时间表：近封装光学器件将在本财年末实现首次量产、明年高量产；共封装光学器件开始普及；2027 财年营收主要来自可插拔收发器并看到 NPO 初始销量；收入增长 39%，其中光子学-SOI 领先。"
+    }
+  ],
+  "scenes": [
+    {
+      "caption": "AI降温\n光学未必跟着减",
+      "text": "先说一个反常识的结论：就算 AI 的总资本开支真的往下走，光学链的收入也不一定跟着减。"
+    },
+    {
+      "caption": "先做四个\n压力测试",
+      "text": "有人给 AI 多头出了一份压力测试清单。第一，2028 年之后资本支出削减。第二，算力搁浅，数据中心减速。"
+    },
+    {
+      "caption": "财务恶化\n加息两倍以上",
+      "text": "第三，财务状况恶化。第四，加息两倍以上。他说，如果这四条同时加速，那反而是一个机会。"
+    },
+    {
+      "caption": "混在一起的\n两笔账",
+      "text": "为什么？因为大家习惯用总资本开支去推光学链的收入，但这两件事之间，不是一比一。"
+    },
+    {
+      "caption": "算力建好了\n却有一部分闲着",
+      "text": "物理上的约束是原因之一。数据中心建了很多算力，可铜缆链路限制了数据处理的可用性，一部分算力其实闲置着。光学消除的正是这个瓶颈。"
+    },
+    {
+      "caption": "省下的电\n等于多几个GPU",
+      "text": "更关键的是两个经济激励。第一是省电。功率受限的数据中心，省下的电就等于能多支持一部分 GPU，大概百分之四点五。"
+    },
+    {
+      "caption": "光做内存池\n能省三成HBM4",
+      "text": "第二是省内存。某些场景下，用光做内存池，可以省掉最多三成的 HBM4 开销。"
+    },
+    {
+      "caption": "采购放缓\n环节反而加速",
+      "text": "所以真实的关系更接近这样：GPU 采购总量放缓，光学引擎、光源和交换机这些环节反而可能加速，因为省电、提利用率、省内存的动机更强了。"
+    },
+    {
+      "caption": "资本正在\n往这边挤",
+      "text": "这也解释了行业里的动作：马斯克在做并购，Marvell 收购了 Lumentum，三星在推光子代工，SK 海力士在推 CPO。"
+    },
+    {
+      "caption": "价值会迁移\n不是消失",
+      "text": "一句话总结：价值会从跟着总量走的位置，迁移到跟着架构变化走的位置。这不是消失，是换地方。"
+    }
+  ],
+  "timings": [
+    7.82,
+    10.87,
+    8.93,
+    7.92,
+    12.86,
+    11.26,
+    7.82,
+    12.98,
+    9.77,
+    8.95
+  ],
+  "seconds": 99.2
+}

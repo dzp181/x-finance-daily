@@ -58,7 +58,8 @@
       "opinion_cap": -6.0,
       "broadcast": -4.0,
       "stale": -1.8,
-      "listing": -2.5
+      "listing": -2.5,
+      "stock": -3.0
     },
     "kind_bonus": {
       "拆账": 1.6,
@@ -69,7 +70,8 @@
       "机制": 0.0,
       "盘面": -3.0,
       "观点": -2.0,
-      "清单": -2.0
+      "清单": -2.0,
+      "个股": -2.5
     },
     "trusted_accounts": [
       "cnfinancewatch",

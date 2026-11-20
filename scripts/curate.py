@@ -62,11 +62,23 @@ MAPPING_WORDS = [
     "人民币", "汇率", "美元指数", "房贷", "存款", "理财", "黄金", "油价", "通胀",
     "关税", "出口", "映射", "传导", "国内", "老百姓", "消费", "工资", "社保",
 ]
-# 一手信源：公司、监管、交易所自己说的，不是二手解读。
-FIRSTHAND_WORDS = [
-    "电话会", "业绩会", "纪要", "招股书", "13F", "财报", "指引", "公告",
-    "官方", "原文", "披露", "答问", "问答", "声明", "路演", "调研",
+# 一手信源分两层（v3.1）：规则层要加分，个股层要降权。
+# 用户发小红书/视频号，30+ 受众明确不喜欢「分析个股」——
+# 一家公司的财报电话会拆得再细，落点也只是那一家公司，不是能复用的市场机制。
+# 原来 FIRSTHAND_WORDS 把两者混在一起（电话会/财报 和 招股书/13F 同等加分），
+# 导致写得很细的财报长文在「一手 + 算账 + 机制词」上全拿高分，挤掉机制题。
+# 规则层：监管/交易所/招股材料/政策原文——讲的是规则，可复用。
+RULE_FIRST_WORDS = [
+    "招股书", "招股说明书", "13F", "文件号", "监管", "证监会", "SEC", "交易所",
+    "法案", "规则", "最终规则", "临时最终规则", "BIS", "出口管制", "官方",
+    "公告", "声明", "原文", "路演", "监管文件",
 ]
+# 个股层：某家公司自己的业绩与电话会——讲的是那家公司，不可复用。
+# 刻意不含「纪要」「指引」：FOMC 会议纪要、央行指引是宏观规则层，会误伤。
+STOCK_FIRST_WORDS = [
+    "电话会", "业绩会", "财报", "问答", "答问", "业绩说明会", "调研",
+]
+FIRSTHAND_WORDS = RULE_FIRST_WORDS + STOCK_FIRST_WORDS
 # 背离：同一条消息，两个资产反应不同——这是「见解型」内容最好的入口。
 CONTRAST_WORDS = ["反而", "却", "只有", "唯独", "分化", "背离", "一边", "同时"]
 ASSET_WORDS = [
@@ -191,10 +203,20 @@ def score_detail(item: dict, cfg: dict, account_volume: dict | None = None) -> d
         min(float(fw.get("mapping_cap", 2.2)), float(fw.get("mapping", 0.7)) * len(mapping_hits)), 2
     )
 
-    fh_hits = [k for k in FIRSTHAND_WORDS if k in text]
+    # ---- v3.1 一手分层：只有规则层一手加分 ----
+    fh_hits = [k for k in RULE_FIRST_WORDS if k in text]
     parts["first_hand"] = round(
         min(float(fw.get("first_hand_cap", 2.0)), float(fw.get("first_hand", 0.6)) * len(fh_hits)), 2
     )
+
+    # 个股财报降权：命中个股层一手词，且交易结构不足、又没有规则层词豁免，
+    # 基本可以断定是「某家公司自己的业绩」——不是这个频道要的内容。
+    # 豁免条件让「财报里讲招股/解禁/监管文件」这类还有复用价值的内容留下来。
+    stock_hits = [k for k in STOCK_FIRST_WORDS if k in text]
+    if stock_hits and len(deal_hits) < 2 and not fh_hits:
+        parts["stock"] = float(fw.get("stock", -3.0))
+    else:
+        parts["stock"] = 0.0
 
     contrast_hits = [k for k in CONTRAST_WORDS if k in text]
     assets = sorted({a for a in ASSET_WORDS if a in text})
@@ -269,7 +291,7 @@ def score_detail(item: dict, cfg: dict, account_volume: dict | None = None) -> d
     if item.get("url"):
         parts["url"] = 0.3
 
-    fit_keys = ("deal", "calc", "mapping", "first_hand", "contrast",
+    fit_keys = ("deal", "calc", "mapping", "first_hand", "stock", "contrast",
                 "opinion", "broadcast", "listing")
     return {
         "score": round(sum(parts.values()), 2),
@@ -286,6 +308,7 @@ def score_detail(item: dict, cfg: dict, account_volume: dict | None = None) -> d
             "calc_hits": calc_hits,
             "mapping_hits": mapping_hits,
             "first_hand_hits": fh_hits,
+            "stock_hits": stock_hits,
             "contrast_hits": contrast_hits,
             "assets": assets,
             "opinion_hits": opinion_hits,
@@ -300,17 +323,19 @@ def score(item: dict, cfg: dict, account_volume: dict | None = None) -> float:
 
 
 # 内容形态：决定它在选题配比里占什么位置，不是质量高低
-KINDS = ("拆账", "一手", "背离", "算账", "映射", "机制", "清单", "盘面", "观点")
+KINDS = ("拆账", "一手", "个股", "背离", "算账", "映射", "机制", "清单", "盘面", "观点")
 
 
 def kind_of(parts: dict) -> str:
-    """看分数构成判断形态。拆账/一手/背离优先，盘面和观点直接标出来。"""
+    """看分数构成判断形态。拆账/一手/背离优先，个股和盘面、观点直接标出来。"""
     if parts.get("broadcast", 0) < 0:
         return "盘面"
     if parts.get("listing", 0) < 0:
         return "清单"
     if parts.get("opinion", 0) < 0:
         return "观点"
+    if parts.get("stock", 0) < 0:
+        return "个股"
     if parts.get("deal", 0) >= 1.7:
         return "拆账"
     if parts.get("first_hand", 0) >= 1.2:

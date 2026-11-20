@@ -18,6 +18,22 @@
   "scoring": {
     "min_chars": 40,
     "max_chars": 900,
+    "min_score": 3.0,
+    "boost_cap": 9.0,
+    "per_account_cap": 6,
+    "per_account_clusters": 3,
+    "cluster_similarity": 0.34,
+    "cluster_min_shared": 2,
+    "trusted_accounts": [
+      "cnfinancewatch", "aleabitoreddit", "qinbafrank", "YaoXiao46714",
+      "xiaomustock", "lianyanshe", "baoshu88", "Svwang1", "Kay2289123",
+      "ChloeGalaxyKD"
+    ],
+    "noise_accounts": [
+      "elonmusk", "realDonaldTrump", "RepYassAnsari", "cz_binance",
+      "thankUcrypto", "xy_xtony", "finkd", "thsottiaux", "hejushang8",
+      "artinmemes", "maojietrading", "LindaRaschke", "pelositracker"
+    ],
     "boost_keywords": [
       "财报", "估值", "利率", "降息", "加息", "通胀", "cpi", "非农", "美联储", "fed",
       "国债", "收益率", "美元", "汇率", "原油", "黄金", "半导体", "存储", "hbm",

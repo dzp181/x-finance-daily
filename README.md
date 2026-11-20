@@ -8,12 +8,18 @@
 x2ding（GitHub Actions 每 10 分钟抓 X）
     └─ ntfy 主题 x-<handle>
          └─ fetch.py      拉 48 小时推文 → data/
-              └─ curate.py    打分排序 → 候选清单
-                   └─ episode.json   人工/模型定选题、写口播词
-                        └─ build_episode.py  TTS + 出图 + 合成 → video.mp4 / cover.png
-                             └─ render_docs.py   → script.md / caption.md
-                                  └─ publish.py   bsk 填进视频号发布页（停在「发表」前）
+              └─ curate.py    一级：词表粗筛（阈值 + 账号限流）→ 70 条左右
+                   └─ cluster.py   二级：聚成事件簇 → data/shortlist/<日期>-<档>.md
+                        └─ episode.json   模型判断选题（写进 picked_reason）、写口播词
+                             └─ build_episode.py  TTS + 出图 + 合成 → video.mp4 / cover.png
+                                  └─ render_docs.py   → script.md / caption.md
 ```
+
+选题分两级，不是为了好看，是因为单条打分做不到「比较事件」：
+
+1. **一级｜词表粗筛**（`curate.py`）：加分词按 `sqrt` 衰减并封顶，长贴不能靠堆术语刷分；加时效衰减、账号权重、刷屏惩罚、数字密度；每账号最多 6 条进池。
+2. **二级｜事件聚类 + 模型判断**（`cluster.py` + 对话里的模型）：近乎同文的转载合并成一个事件（只列一条代表、标出覆盖几个账号），再由模型按「能不能讲清一个机制 / 数字能不能核实 / 是否与近期撞题」挑一个。
+
 
 ## 为什么这么设计
 
@@ -25,9 +31,10 @@ x2ding（GitHub Actions 每 10 分钟抓 X）
 
 ```
 config.json              抓取窗口、评分词表、画面尺寸、频道名、免责声明
-scripts/run.py           编排入口：new / build / status / all
+scripts/run.py           编排入口：shortlist / new / build / status / all
 scripts/fetch.py         读 x2ding 的 watchlist，从 ntfy 拉推文，落 data/
-scripts/curate.py        打分排序，输出候选
+scripts/curate.py        一级粗筛：词表打分（封顶 + 时效 + 账号权重 + 数字密度）
+scripts/cluster.py       二级聚类：粗筛结果按事件合并，输出 data/shortlist/
 scripts/build_episode.py episode.json → video.mp4 + cover.png（本地 TTS，无网络）
 scripts/render_docs.py   episode.json → script.md + caption.md
 scripts/pack_ima.py      一期 → outbox/（ima 能收的 md + mp3 + manifest）
@@ -65,8 +72,9 @@ python3 scripts/run.py build --crf 16       # ③ 出片 + 出文案，产物路
 
 | 命令 | 作用 |
 | --- | --- |
-| `run.py` / `run.py new` | 抓 48h 推文 → 打分 → 打印前 8 名候选 → 建草稿（`episode.json` + `sources.md` 骨架） |
-| `run.py new --pick 3 --slug gold` | 选第 3 名候选，目录名后缀改成 `gold` |
+| `run.py shortlist` | 抓 48h → 粗筛 → 事件聚类 → 写 `data/shortlist/<日期>-<档>.md`（给模型读的选题清单） |
+| `run.py new --cluster 3` | 用第 3 个事件建草稿（**推荐路径**），`--reason` 可写上选题理由 |
+| `run.py new --pick 3` | 旧路径：直接按单条推文排序选第 3 名 |
 | `run.py new --offline` | 不联网，直接用 `data/raw` 里最新的缓存 |
 | `run.py build` | 最新一期 → `video.mp4` / `cover.png` / `script.md` / `caption.md`（默认 `--crf 16`） |
 | `run.py build <slug>` | 指定一期 |
@@ -212,7 +220,9 @@ cookie 失效时会明确报「cookie 已失效」，重跑 `--login` 扫一次�
 pip install pillow imageio-ffmpeg edge-tts
 
 python3 scripts/fetch.py                          # 拉 48 小时推文
-python3 scripts/curate.py --top 20                # 看候选
+python3 scripts/curate.py --top 20 --detail       # 一级粗筛（--detail 看分数构成）
+python3 scripts/cluster.py --top 12               # 二级聚类 → data/shortlist/
+python3 scripts/run.py new --cluster 1            # 用第 1 个事件建草稿
 python3 scripts/build_episode.py <slug> --crf 16  # 只出片
 python3 scripts/render_docs.py <slug>             # 只出文档
 # 发布：见 episodes/<slug>/publish.md

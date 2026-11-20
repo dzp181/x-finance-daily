@@ -80,20 +80,30 @@ def is_ready(ep_dir: Path) -> tuple[bool, str]:
 
 # ---------------------------------------------------------------- 选题
 
-def load_ranked(cfg: dict, offline: bool) -> list[dict]:
-    sys.path.insert(0, str(SCRIPTS))
-    import curate  # noqa: PLC0415
-
+def load_raw(cfg: dict, offline: bool) -> list[dict]:
+    """取料：默认先跑 fetch.py，再读最近一轮的原始 JSON。"""
     if not offline:
         sh([sys.executable, str(SCRIPTS / "fetch.py")])
     cache = sorted((ROOT / "data" / "raw").glob("*.json"))
     if not cache:
         raise SystemExit("data/raw 里没有候选，先跑 fetch.py")
-    rows = json.loads(cache[-1].read_text(encoding="utf-8"))
-    for r in rows:
-        r["score"] = curate.score(r, cfg)
-    rows.sort(key=lambda r: r["score"], reverse=True)
-    return [r for r in rows if r["score"] > 0]
+    return json.loads(cache[-1].read_text(encoding="utf-8"))
+
+
+def load_ranked(cfg: dict, offline: bool, top: int | None = None) -> list[dict]:
+    """一级：词表粗筛（有阈值、有账号限流）。"""
+    sys.path.insert(0, str(SCRIPTS))
+    import curate  # noqa: PLC0415
+
+    return curate.rank(load_raw(cfg, offline), cfg, top)
+
+
+def load_clusters(cfg: dict, offline: bool, used: set[str], top: int = 12) -> list[dict]:
+    """二级：把粗筛结果聚成事件簇，簇内留一条代表。"""
+    sys.path.insert(0, str(SCRIPTS))
+    import cluster  # noqa: PLC0415
+
+    return cluster.build(cfg, load_raw(cfg, offline), used)[:top]
 
 
 def guess_tags(text: str, cfg: dict, k: int = 4) -> list[str]:
@@ -106,47 +116,99 @@ def guess_tags(text: str, cfg: dict, k: int = 4) -> list[str]:
 
 
 def used_seeds() -> set[str]:
-    """已经做过选题的推文 URL，避免一天两期选到同一条。"""
-    used = set()
+    """做过的选题 URL（含同事件其它来源），用于事件级去重。
+
+    只认 seed.url 和 seed.urls，不再把 sources.md 里所有链接都算进来——
+    那会把「参考候选」也一并排除，候选池越跑越窄。
+    """
+    used: set[str] = set()
     for d in EPISODES.glob("*"):
         f = d / "episode.json"
-        if f.exists():
-            try:
-                ep = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:  # noqa: BLE001
-                ep = {}
-            url = (ep.get("seed") or {}).get("url")
-            if url:
-                used.add(url)
-        src = d / "sources.md"
-        if src.exists():
-            used.update(re.findall(r"https://x\.com/[A-Za-z0-9_]+/status/\d+", src.read_text("utf-8")))
+        if not f.exists():
+            continue
+        try:
+            ep = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        seed = ep.get("seed") or {}
+        if seed.get("url"):
+            used.add(seed["url"])
+        for u in seed.get("urls") or []:
+            used.add(u)
     return used
+
+
+def cmd_shortlist(args) -> int:
+    """抓取 → 打分 → 事件聚类，落一份选题清单（给模型/人判断用）。"""
+    if not args.offline:
+        rc = sh([sys.executable, str(SCRIPTS / "fetch.py")])
+        if rc != 0:
+            print("抓取失败，改用本地缓存", file=sys.stderr)
+    return sh([sys.executable, str(SCRIPTS / "cluster.py"), "--top", str(args.top)])
 
 
 def cmd_new(args) -> int:
     cfg = load_config()
-    ranked = load_ranked(cfg, args.offline)
-    if not ranked:
-        print("今天没有正分候选，换个窗口：python3 scripts/fetch.py --since 24h")
-        return 1
-
     used = set() if args.allow_repeat else used_seeds()
-    if used:
-        ranked = [r for r in ranked if r.get("url") not in used]
-        print(f"已排除 {len(used)} 条做过的选题")
+    want_cluster = getattr(args, "cluster", None)
+    refs: list[dict] = []
+    cluster_meta: dict | None = None
 
-    print(f"\n候选 {len(ranked)} 条，前 {args.top}：\n")
-    for i, r in enumerate(ranked[: args.top], 1):
-        text = r["text"].replace("\n", " ")
-        print(f"[{i:>2}] {r['score']:>5.1f}  @{r['handle']:<18} {r['url']}")
-        print(f"     {text[:150]}{'…' if len(text) > 150 else ''}")
+    if want_cluster:
+        clusters = load_clusters(cfg, args.offline, used, top=max(args.top, want_cluster))
+        todo = [c for c in clusters if not c["done"]]
+        if not todo:
+            print("这一窗口里的事件都做过了，换窗口：python3 scripts/fetch.py --since 24h")
+            return 1
+        print(f"\n事件 {len(clusters)} 个，未做过 {len(todo)} 个，前 {min(args.top, len(todo))}：\n")
+        for i, c in enumerate(todo[: args.top], 1):
+            print(f"[{i:>2}] {c['score']:>6.2f}  覆盖{c['coverage']}×{c['members']:<2}  @{c['rep']['handle']:<16} {c['label'][:60]}")
+            print(f"     {c['rep']['url']}")
+        idx = max(1, want_cluster)
+        if idx > len(todo):
+            print(f"\n只有 {len(todo)} 个未做过的事件，--cluster {idx} 超了")
+            return 1
+        c = todo[idx - 1]
+        seed = {
+            "handle": c["rep"]["handle"],
+            "url": c["rep"]["url"],
+            "score": c["rep"]["score"],
+            "text": c["rep"]["text"],
+        }
+        refs = c["others"]
+        cluster_meta = {
+            "id": c["id"],
+            "label": c["label"],
+            "coverage": c["coverage"],
+            "accounts": c["accounts"],
+            "members": c["members"],
+            "numbers": c["numbers"],
+            "mech_hits": c["mech_hits"],
+        }
+        seed["urls"] = [c["rep"]["url"]] + [o["url"] for o in refs if o.get("url")]
+        print(f"\n选中事件：{c['label']}（覆盖 {c['coverage']} 个账号）")
+    else:
+        ranked = load_ranked(cfg, args.offline)
+        if not ranked:
+            print("今天没有过阈值的候选，换个窗口：python3 scripts/fetch.py --since 24h")
+            return 1
+        if used:
+            before = len(ranked)
+            ranked = [r for r in ranked if r.get("url") not in used]
+            print(f"已排除 {before - len(ranked)} 条做过的推文")
 
-    idx = max(1, args.pick)
-    if idx > len(ranked):
-        print(f"\n只有 {len(ranked)} 条候选，--pick {idx} 超了")
-        return 1
-    seed = ranked[idx - 1]
+        print(f"\n候选 {len(ranked)} 条，前 {args.top}：\n")
+        for i, r in enumerate(ranked[: args.top], 1):
+            text = r["text"].replace("\n", " ")
+            print(f"[{i:>2}] {r['score']:>6.2f}  @{r['handle']:<18} {r['url']}")
+            print(f"     {text[:150]}{'…' if len(text) > 150 else ''}")
+
+        idx = max(1, args.pick)
+        if idx > len(ranked):
+            print(f"\n只有 {len(ranked)} 条候选，--pick {idx} 超了")
+            return 1
+        seed = ranked[idx - 1]
+        refs = ranked[1:5]
 
     slug = args.slug or auto_slot()
     ep_dir = EPISODES / f"{today()}-{slug}"
@@ -175,29 +237,38 @@ def cmd_new(args) -> int:
             "url": seed["url"],
             "score": seed["score"],
             "text": seed_text,
+            "urls": seed.get("urls") or [seed["url"]],
         },
+        "cluster": cluster_meta,
+        "picked_reason": getattr(args, "reason", None),
         "references": [
             {"handle": r["handle"], "url": r["url"], "text": r["text"][:600]}
-            for r in ranked[:5]
+            for r in refs
         ],
         "scenes": [],
     }
     ep_file.write_text(json.dumps(ep, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    head = f"> 选题来自 @{seed['handle']} 的这条推文（评分 {seed['score']}）。" \
+           "数字必须能在下表找到出处，找不到的就不写进口播。"
+    if cluster_meta:
+        head += (
+            f"\n> 事件：{cluster_meta['label']}｜覆盖 {cluster_meta['coverage']} 个账号"
+            f"（{'、'.join('@' + a for a in cluster_meta['accounts'][:6])}）。"
+        )
     src = [
         f"# 资料来源 · {ep_dir.name}",
         "",
-        f"> 选题来自 @{seed['handle']} 的这条推文（评分 {seed['score']}）。"
-        "数字必须能在下表找到出处，找不到的就不写进口播。",
+        head,
         "",
         "| 用于 | 账号 | 推文 | 关键数据 |",
         "| --- | --- | --- | --- |",
         f"| TODO 哪一句 | @{seed['handle']} | [链接]({seed['url']}) | TODO 引用的数字/原文 |",
         "",
-        "## 参考候选（同窗口其它高分推文）",
+        "## 同事件其它来源（可交叉核对）",
         "",
     ]
-    for r in ranked[1:5]:
+    for r in refs:
         src.append(f"- @{r['handle']} · {r['score']} · {r['url']}")
         src.append(f"  - {r['text'][:160].replace(chr(10), ' ')}")
     src += [
@@ -336,11 +407,18 @@ def main() -> int:
 
     def common(p):
         p.add_argument("--offline", action="store_true", help="不联网，用本地缓存")
-        p.add_argument("--top", type=int, default=8, help="打印前几名候选")
-        p.add_argument("--pick", type=int, default=1, help="用第几名候选做草稿")
-        p.add_argument("--slug", default=None, help="episode 目录后缀，默认 draft")
+        p.add_argument("--top", type=int, default=12, help="打印前几个候选")
+        p.add_argument("--pick", type=int, default=1, help="（旧路径）用第几条推文做草稿")
+        p.add_argument("--cluster", type=int, default=None, help="用第几个事件簇做草稿（推荐）")
+        p.add_argument("--reason", default=None, help="选题理由，写进 episode.json 备查")
+        p.add_argument("--slug", default=None, help="episode 目录后缀，默认 am/pm")
         p.add_argument("--force", action="store_true", help="覆盖已存在的草稿")
-        p.add_argument("--allow-repeat", action="store_true", help="允许选已做过的推文")
+        p.add_argument("--allow-repeat", action="store_true", help="允许选已做过的事件")
+
+    p_short = sub.add_parser("shortlist", help="抓取 + 打分 + 事件聚类，出选题清单")
+    p_short.add_argument("--offline", action="store_true")
+    p_short.add_argument("--top", type=int, default=12)
+    p_short.set_defaults(func=cmd_shortlist)
 
     p_new = sub.add_parser("new", help="抓取 + 候选 + 建草稿")
     common(p_new)
